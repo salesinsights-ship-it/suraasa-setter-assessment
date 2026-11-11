@@ -1,0 +1,44 @@
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { rpc } from '../api.js';
+
+const Ctx = createContext(null);
+export const useAdmin = () => useContext(Ctx);
+
+/** Loads everything a recruiter or admin is allowed to see, once, and reloads it after each change. */
+export function AdminProvider({ children }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const reload = useCallback(async () => {
+    try { const d = await rpc('adminHome'); setData(d); setError(''); return d; } catch (e) { setError(e.message); return null; }
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+  const value = useMemo(() => {
+    if (!data) return { data: null, error, reload };
+    const byId = (xs) => Object.fromEntries(xs.map((x) => [x.id, x]));
+    return {
+      data, error, reload,
+      isAdmin: data.user.role === 'super_admin',
+      cands: byId(data.candidates), personas: byId(data.personas), templates: byId(data.templates), users: byId(data.users),
+    };
+  }, [data, error, reload]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/** The session that represents a candidate on the leaderboard: their latest scored call that still counts. */
+export function latestScored(sessions, candidateId) {
+  return sessions.filter((s) => s.candidate_id === candidateId && s.status === 'scored' && !s.voided).sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0] || null;
+}
+
+export function latestDecision(decisions, candidateId) {
+  return decisions.filter((d) => d.candidate_id === candidateId).sort((a, b) => (a.at < b.at ? 1 : -1))[0] || null;
+}
+
+/** Candidates whose most recent call cannot be relied on: too short, dropped, set aside, unscored or technically flagged. */
+export function needsReassessment(data) {
+  return data.candidates.filter((c) => c.status === 'active').filter((c) => {
+    const mine = data.sessions.filter((s) => s.candidate_id === c.id).sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
+    const last = mine[0];
+    if (!last) return false;
+    return last.voided || ['incomplete', 'abandoned', 'ended'].includes(last.status) || (last.status === 'scored' && last.flags?.tech);
+  });
+}
