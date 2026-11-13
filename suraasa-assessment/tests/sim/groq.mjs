@@ -25,7 +25,12 @@ export function makeFakeGroq() {
     const q = (i) => { const c = cand[i % Math.max(1, cand.length)] || { turn: 1, text: '' }; return { turn: c.turn, quote: c.text.split(/\s+/).slice(0, 8).join(' ') }; };
     const levels = [3, 3, 2, 3, 2, 2, 3, 2, 3, 4];
     const parameters = {};
-    keys.forEach((k, i) => { parameters[k] = { level: levels[i % levels.length], did_well: 'Did this reasonably.', did_wrong: 'Could go deeper.', missed: 'A follow-up question.', improve: 'Ask one more open question.', evidence: [q(i)] }; });
+    // A rubric with criteria is marked criterion by criterion: this stand-in gives one point less than the maximum for each.
+    const criteria = Object.fromEntries((user.match(/Criteria keys for each parameter: (.+?) END/)?.[1] || '').split('; ').filter(Boolean).map((part) => {
+      const [k, list] = part.split('=');
+      return [k, Object.fromEntries(list.split('|').map((c) => { const [ck, max] = c.split(':'); return [ck, Math.max(1, Number(max) - 1)]; }))];
+    }));
+    keys.forEach((k, i) => { parameters[k] = { ...(criteria[k] ? { criteria: criteria[k] } : {}), level: criteria[k] ? undefined : levels[i % levels.length], did_well: 'Did this reasonably.', did_wrong: 'Could go deeper.', missed: 'A follow-up question.', improve: 'Ask one more open question.', evidence: [q(i)] }; });
     const badClaim = cand.find((c) => /guarantee/i.test(c.text));
     return {
       parameters,

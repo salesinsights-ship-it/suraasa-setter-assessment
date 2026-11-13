@@ -162,30 +162,96 @@ export const LEVEL_NOTES = {
   3: 'Level 3, Advanced. You are hard to move. Combine doubt, time pressure and cost concerns where they fit your character. Give ground only in small steps and only for good reasons.',
 };
 
+/* ------------------------------------------------------------ Setter Evaluation Rubric, Master 2.0 */
+
+const cr = (key, name, max, levels) => ({ key, name, max, levels });
+const sec = (key, group, name, guide, criteria) => ({ key, group, name, max: criteria.reduce((a, c) => a + c.max, 0), guide, criteria });
+
+/**
+ * Suraasa's own Setter Evaluation Rubric (Master 2.0): the CARE call in four parts plus a professionalism overlay,
+ * 30 criteria, 100 marks. Each criterion is marked in whole points against its own descriptors; 0 means it was not attempted.
+ * Two "Max" cells in the source sheet disagree with their own descriptors and section totals, so the section totals win:
+ * Self + Suraasa Credibility is out of 5 and EBANT Extraction is out of 4. A3 gives one 1-to-7 scale for both of its
+ * criteria, which is split here as Emotional Depth (4) and Transition to Revealing (3).
+ */
+export const SETTER_RUBRIC = {
+  id: 'setter-master-2.0',
+  thresholds: { strong: 85, recommended: 70, borderline: 55 },
+  bands: ['Elite Setter', 'Strong Performer', 'Developing – Needs Coaching', 'Poor Performer – Needs Retraining'],
+  parameters: [
+    sec('c1_opening', 'Connecting', 'C1. Opening & Credibility', 'Confident, warm, natural opening; the teacher feels respected in the first 20 seconds. Positions Suraasa as global, recognised and structured, and builds trust early.', [
+      cr('hook', 'Hook & Warm Opening', 3, '1 = Rushed or scripted, no personalisation, teacher responds passively, no engagement. 2 = Clear intro but mechanical; polite, not engaging, no hook; teacher neutral. 3 = Warm, confident, natural; uses the teacher\'s name, sets context briefly; teacher engages at once.'),
+      cr('credibility', 'Self + Suraasa Credibility', 5, '1 = Company name only, no credibility context. 2 = Says Suraasa works with teachers but vague; no global positioning or authority. 3 = Mentions recognition or scale, not linked to teacher benefit. 4 = Clearly explains recognition, global ecosystem and school partnerships; moderate authority. 5 = Positions Suraasa as a structured career growth platform and links credibility to the teacher\'s future; teacher sounds reassured and attentive.'),
+    ]),
+    sec('c2_profiling', 'Connecting', 'C2. Profiling Depth', 'Draws out degrees, curriculum, grades and experience smoothly, and clear Eligibility, Budget awareness, Authority, Need and Timeline (EBANT).', [
+      cr('profiling', 'Profiling Accuracy', 3, '1 = Random or incomplete profiling questions; misses key areas (degree, experience, curriculum). 2 = Covers most but misses one critical dimension, or sounds checklist-driven. 3 = Smooth conversational profiling covering degree, experience, subjects, grades and curriculum; organic, not interrogative.'),
+      cr('ebant', 'EBANT Extraction', 4, '1 = None, or only surface-level need; no eligibility questions. 2 = One or two elements (for example need and timeline) without depth or emotional insight. 3 = Three or four EBANT elements with some probing; emotional trigger partly clear. 4 = Eligibility, Budget awareness, Authority, Need and Timeline all clear; teacher expresses genuine internal motivation.'),
+    ]),
+    sec('c3_goal', 'Connecting', 'C3. Goal Clarity & Transition', 'Finds a clear, specific career goal with the "why" behind it, then bridges smoothly into the next part.', [
+      cr('goal', 'Goal Identification', 3, '1 = Only a generic goal ("growth", "better salary"), no probing. 2 = One concrete goal but no why behind it. 3 = Specific goal plus the reason behind it; emotional connection visible.'),
+      cr('transition', 'Transition to Augmenting', 2, '1 = Abrupt shift, feels like a script jump; teacher confused or silent. 2 = Smooth logical bridge; teacher ready to imagine possibilities.'),
+    ]),
+    sec('a1_visioning', 'Augmenting', 'A1. Emotional Permission & Visioning', 'Asks reflective questions so the teacher opens up, then helps the teacher imagine specific growth, salary and recognition that feel real.', [
+      cr('permission', 'Emotional Permission', 3, '1 = Stays informational, no reflective questions. 2 = Attempts reflection but shallow. 3 = Thoughtful reflective questions; teacher opens up emotionally.'),
+      cr('visioning', 'Visioning', 5, '1 = No imagination built, pure information. 2 = Mentions growth vaguely. 3 = Helps the teacher imagine growth but lacks vivid detail. 4 = Clear future scenario painted; structured imagination. 5 = Teacher vividly imagines a new role, salary and recognition; feels real and attainable.'),
+    ]),
+    sec('a2_desire', 'Augmenting', 'A2. Desire Building & Salary Positioning', 'Positions salary growth (55–80K) naturally and achievably, mirrors a relevant success story, and amplifies the teacher\'s own why.', [
+      cr('salary', 'Salary Imagination (55–80K)', 4, '1 = Salary mentioned randomly or unrealistically. 2 = Mentioned but not connected to the teacher\'s profile. 3 = Partly connected to the teacher\'s experience. 4 = Logically and realistically tied to the teacher\'s profile and growth path.'),
+      cr('story', 'Success Story Mirroring', 3, '1 = Generic success story, no persona match. 2 = Some relevance but not closely aligned. 3 = Clearly mirrors a similar teacher profile; strong relatability.'),
+      cr('amplify', 'Emotional Amplification', 3, '1 = Ignores the teacher\'s why. 2 = Acknowledges the why but does not deepen it. 3 = Amplifies the teacher\'s emotional reason authentically.'),
+    ]),
+    sec('a3_anchoring', 'Augmenting', 'A3. Anchoring the Why', 'The teacher says in their own words why growth matters, and the setter bridges consultatively into "this needs a process".', [
+      cr('depth', 'Emotional Depth', 4, '1 = Weak anchoring; teacher gives neutral responses. 2 = Teacher agrees growth is important but shows no urgency. 3 = Teacher expresses importance clearly and connects it to life goals. 4 = Teacher shows strong internal commitment and urgency.'),
+      cr('to_revealing', 'Transition to Revealing', 3, '1 = Jumps to the programme with no bridge. 2 = A bridge is made but it reads as a pitch. 3 = Consultative bridge into "career growth requires a process".'),
+    ]),
+    sec('r1_process', 'Revealing', 'R1. Process Positioning', 'Explains logically that career growth requires a structured process, then walks through the 5-step journey clearly, confidently and without sounding salesy.', [
+      cr('process', 'Career Growth Requires Process', 3, '1 = Explains the programme randomly, no structure. 2 = Mentions a process but sequencing unclear. 3 = Clear logical explanation that career growth requires structured steps.'),
+      cr('journey', '5-Step Journey Explanation', 5, '1 = Confusing or incomplete. 2 = Mentions steps but lacks clarity. 3 = Explains clearly but slightly rushed. 4 = Clear and confident walkthrough. 5 = Teacher understands the journey and sees value in each step.'),
+    ]),
+    sec('r2_gaps', 'Revealing', 'R2. Personalization & Gap Clarity', 'Customises the gaps to this teacher\'s profile and clearly connects closing them to higher salary and roles.', [
+      cr('gaps', 'Gap Identification', 5, '1 = No personalisation of gaps. 2 = Generic gap mention. 3 = One or two gaps loosely tied to the teacher. 4 = Gaps clearly customised to the teacher\'s profile. 5 = Teacher acknowledges the gaps and sees strong relevance.'),
+      cr('link', 'Linking Gaps to Opportunity', 5, '1 = No connection between gaps and growth. 2 = Weak connection. 3 = Connects some improvement to growth. 4 = Strong logical connection to salary, promotion or global roles. 5 = Teacher clearly sees the qualification-to-opportunity pathway.'),
+    ]),
+    sec('r3_investment', 'Revealing', 'R3. Investment Framing & Readiness Check', 'Hints at the investment gently and without pressure, confirms effort, time and money, and checks the teacher agrees growth matters now.', [
+      cr('hint', 'Soft Investment Hint', 4, '1 = Mentions money abruptly. 2 = Mentions investment without framing. 3 = Softly introduces an investment range. 4 = Frames investment logically as a commitment to growth.'),
+      cr('equation', 'Effort + Time + Money Equation', 4, '1 = Does not confirm readiness. 2 = Confirms only one factor. 3 = Confirms two factors. 4 = Confirms time, effort and financial commitment clearly.'),
+      cr('readiness', 'Emotional Readiness Check', 4, '1 = No readiness check. 2 = Surface-level check. 3 = Teacher agrees politely. 4 = Teacher expresses genuine seriousness and readiness.'),
+    ]),
+    sec('e1_handoff', 'Ending', 'E1. Handoff Strength', 'Positions the counsellor as an expert authority and books the slot with no hesitation and clear ownership.', [
+      cr('counsellor', 'Counsellor Positioning', 3, '1 = Weak handoff, no authority built. 2 = Mentions the counsellor but with low confidence. 3 = Positions the counsellor confidently as an expert authority.'),
+      cr('booking', 'Confident Slot Booking', 3, '1 = Hesitant booking, no control. 2 = Books but lacks ownership. 3 = Confidently secures a slot with clarity and control.'),
+    ]),
+    sec('e2_confirmation', 'Ending', 'E2. Scarcity & Confirmation', 'Creates natural urgency and leaves clear next steps with no ambiguity.', [
+      cr('scarcity', 'Scarcity / FOMO', 2, '1 = No urgency created. 2 = Natural urgency created without pressure. Invented deadlines or seat limits score 0 and belong under conduct.'),
+      cr('confirmation', 'WhatsApp + Calendar Confirmation', 3, '1 = No clear confirmation process. 2 = Mentions confirmation but unclear. 3 = Clear WhatsApp, calendar and confirmation flow.'),
+    ]),
+    sec('e3_closing', 'Ending', 'E3. Closing Warmth & Homework', 'Gives preparation that makes the teacher more likely to show up, and leaves the teacher motivated, not pressured.', [
+      cr('homework', 'Homework Positioning', 2, '1 = No preparation guidance given. 2 = Meaningful pre-session preparation provided.'),
+      cr('warmth', 'Final Emotional Touch', 2, '1 = Ends abruptly. 2 = Ends warmly; teacher feels motivated and positive.'),
+    ]),
+    sec('professionalism', 'Professionalism', 'Professionalism & Emotional Intelligence', 'Across the whole call: listens and reuses the teacher\'s exact words, balances warmth with authority, acknowledges emotional struggle, and keeps respectful control.', [
+      cr('listening', 'Listening & Note Usage', 3, '1 = Interrupts or ignores the teacher\'s inputs; repeats the script. 2 = Acknowledges but does not reuse the teacher\'s words. 3 = Uses the teacher\'s exact phrases later; shows active listening and memory.'),
+      cr('tone', 'Tone & Energy Balance', 3, '1 = Flat, overly aggressive or unsure. 2 = Polite but low energy, or energetic but lacking authority. 3 = Balanced warmth, authority and enthusiasm throughout.'),
+      cr('empathy', 'Empathy', 2, '1 = Surface acknowledgement only ("okay noted"). 2 = Acknowledges emotional struggle meaningfully and reflects the feeling back.'),
+      cr('authority', 'Authority', 2, '1 = Teacher controls the call; setter unsure or hesitant. 2 = Setter keeps respectful control and guides the conversation confidently.'),
+    ]),
+  ],
+};
+
 export const DEFAULT_TEMPLATE = {
   id: 't_default',
   name: 'Pre-Sales Intern: standard mock call',
   version: 1,
   active: true,
   data: {
-    duration_min: 8,
+    duration_min: 15, // the rubric follows a whole setter call, which does not fit in less
     attempts: 1,
     min_turns: 4,
     candidate_feedback: 'summary', // none | summary | full
     show_previous: true,
-    thresholds: { strong: 80, recommended: 65, borderline: 50 },
-    parameters: [
-      { key: 'opening', name: 'Opening and Introduction', max: 10, guide: 'Greets, gives own name and Suraasa, states why they are calling, checks it is a good time. No long script before the teacher has spoken.' },
-      { key: 'rapport', name: 'Rapport Building', max: 10, guide: 'Sounds like a person, not a script. Uses the teacher\'s name and context, acknowledges what they say, matches their pace and language.' },
-      { key: 'clarity', name: 'Communication Clarity', max: 10, guide: 'Short, clear, organised sentences the teacher can follow. Judge whether the message got across, never accent, grammar polish or choice of English, Hindi or Hinglish.' },
-      { key: 'listening', name: 'Active Listening', max: 10, guide: 'Replies build on what the teacher just said. Does not repeat questions already answered, talk over the teacher, or ignore a stated concern.' },
-      { key: 'discovery', name: 'Questioning and Discovery Skills', max: 15, guide: 'Asks open questions about role, experience, goals and challenges before pitching. Follows up on answers. Finds the real reason the teacher might care.' },
-      { key: 'product', name: 'Product Knowledge', max: 10, guide: 'What they say about Suraasa is relevant and matches the verified facts. Says "I will confirm" rather than guessing. Invented fees, guarantees or accreditation score low.' },
-      { key: 'objection', name: 'Objection Handling', max: 15, guide: 'Acknowledges the concern, explores it, answers it honestly and checks it has landed. No arguing, dismissing or pressure.' },
-      { key: 'persuasion', name: 'Persuasion and Value Selling', max: 10, guide: 'Connects Suraasa to this teacher\'s stated needs. Explains benefit, not features. Never pushy or misleading.' },
-      { key: 'qualification', name: 'Lead Qualification', max: 5, guide: 'Checks fit: current role, qualification, experience, goal, timing or interest level, so a counsellor would know whether to invest time.' },
-      { key: 'closing', name: 'Closing and Next-Step Conversion', max: 5, guide: 'Proposes a specific next step (a counselling session, a time) and confirms it. Where the teacher refuses contact, a respectful exit is the correct close.' },
-    ],
+    thresholds: SETTER_RUBRIC.thresholds,
+    bands: SETTER_RUBRIC.bands,
+    parameters: SETTER_RUBRIC.parameters,
   },
 };
 
@@ -215,6 +281,7 @@ export const DEFAULT_CONFIG = {
   teacher_models: null,
   evaluator_models: null,
   voice_engine: 'auto', // auto = live voice when a Gemini key is present, browser = always the browser's own voice
+  rubric: '', // set once the Setter Evaluation Rubric has been applied to the two built-in templates
   record_audio: false, // live voice calls are recorded in the browser and kept in a private Google Drive folder
 };
 
@@ -377,7 +444,7 @@ export const TRAINING_PERSONAS = [
   }),
 ];
 
-/** The 8-skill, 100-mark rubric for intern practice calls. Interns see full feedback after every call. */
+/** Intern practice calls are marked on the same Setter Evaluation Rubric. Interns see full feedback after every call. */
 export const TRAINING_TEMPLATE = {
   id: 't_training',
   name: 'Intern training: practice call',
@@ -389,17 +456,9 @@ export const TRAINING_TEMPLATE = {
     min_turns: 6,
     candidate_feedback: 'full',
     show_previous: true,
-    thresholds: { strong: 80, recommended: 65, borderline: 50 },
-    parameters: [
-      { key: 'communication', name: 'Communication skills', max: 15, guide: 'Clear, concise, well-paced speech the teacher can follow. No script-reading. Judge whether the message got across, never accent, grammar polish or choice of English, Hindi or Hinglish.' },
-      { key: 'rapport', name: 'Rapport building', max: 10, guide: 'Proper introduction, asks permission to talk, sounds like a person, shows real interest in the teacher and acknowledges what they say.' },
-      { key: 'discovery', name: 'Discovery and questioning', max: 15, guide: 'Open questions about role, experience, goals, challenges and timing before pitching. Follows up on answers and finds the real reason the teacher might care.' },
-      { key: 'product', name: 'Product knowledge', max: 15, guide: 'What they say about Suraasa is relevant and matches the verified facts. Says "I will confirm" rather than guessing. Invented fees, guarantees or accreditation score low.' },
-      { key: 'objection', name: 'Objection handling', max: 15, guide: 'Acknowledges the concern, explores it, answers it specifically and honestly, and checks it has landed. No arguing, dismissing or pressure.' },
-      { key: 'persuasion', name: 'Persuasion and sales skills', max: 15, guide: 'Connects Suraasa to this teacher\'s stated needs. Explains benefit, not features. Builds interest step by step. Never pushy or misleading.' },
-      { key: 'closing', name: 'Closing skills', max: 10, guide: 'Proposes a clear, specific next step (a counselling session, a time) and confirms it. Where the teacher refuses contact, a respectful exit is the correct close.' },
-      { key: 'professionalism', name: 'Professionalism and listening', max: 5, guide: 'Does not talk over the teacher, does not repeat questions already answered, recalls what the teacher said accurately, stays courteous throughout.' },
-    ],
+    thresholds: SETTER_RUBRIC.thresholds,
+    bands: SETTER_RUBRIC.bands,
+    parameters: SETTER_RUBRIC.parameters,
   },
 };
 

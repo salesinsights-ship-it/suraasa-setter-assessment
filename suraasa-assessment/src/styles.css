@@ -88,7 +88,7 @@ tr:last-child td { border-bottom: 0; } tr.click { cursor: pointer; } tr.click td
 .bar.good > i { background: var(--good); } .bar.warn > i { background: var(--amber); } .bar.bad > i { background: var(--bad); }
 .quote { border-left: 3px solid var(--blue); padding: 6px 12px; background: var(--bg); border-radius: 0 8px 8px 0; font-size: 14px; }
 .quote.unv { border-left-color: var(--bad); background: #fff7f7; }
-.kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; font-size: 14px; } .kv dt { color: var(--muted); } .kv dd { margin: 0; }
+.kv { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 6px 14px; font-size: 14px; } .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
 .modal-back { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); display: grid; place-items: center; padding: 16px; z-index: 50; overflow-y: auto; animation: fade var(--ease); }
 .modal { background: #fff; border-radius: 14px; width: 100%; max-width: 560px; padding: 22px 24px; box-shadow: var(--shadow-l); max-height: calc(100vh - 32px); overflow-y: auto; animation: rise var(--ease); }
 @keyframes fade { from { opacity: 0; } } @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(.985); } }
@@ -156,7 +156,7 @@ tr:last-child td { border-bottom: 0; } tr.click { cursor: pointer; } tr.click td
   .kpis { grid-template-columns: 1fr 1fr; }
   .g2, .g3, .g4 { grid-template-columns: 1fr; } .g4.keep2 { grid-template-columns: 1fr 1fr; }
   .login { grid-template-columns: 1fr; } .login .art { padding: 24px 22px; border-right: 0; border-bottom: 1px solid #efe7dd; } .login .art h1 { font-size: 24px; margin-top: 18px; } .steps { display: none; }
-  h1 { font-size: 22px; } .kv { grid-template-columns: 110px 1fr; } .modal { padding: 18px; } .page { padding: 18px 14px 60px; }
+  h1 { font-size: 22px; } .kv { grid-template-columns: 110px minmax(0, 1fr); } .modal { padding: 18px; } .page { padding: 18px 14px 60px; }
   .hide-m { display: none !important; }
 }
 @media print {

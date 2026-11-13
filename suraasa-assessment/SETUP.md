@@ -107,14 +107,14 @@ The same site also trains Pre-Sales interns. An intern signs in, picks any of 10
 No change to the Google Sheet script is needed.
 
 1. Open any person under **Candidates** (add the intern first if they are new), and click **Assign a mock call**.
-2. Click **Intern practice**. The first time, a Super Admin clicks **Add the training pack**. This adds the 10 training teachers and the 8-skill, 100-mark rubric. It only needs doing once.
+2. Click **Intern practice**. The first time, a Super Admin clicks **Add the training pack**. This adds the 10 training teachers and the practice template, which is marked on the Setter Evaluation Rubric. It only needs doing once.
 3. Set the call length (15 minutes by default, up to 20), the practice calls allowed each day (3 by default), and optionally a last date. Untick any teacher the intern should not get.
 4. Click **Assign**. Give the intern their access code.
 
 What the intern gets:
 
 - A list of the 10 teachers to choose from, and a count of calls left today. The count resets at midnight India time.
-- After each call: a score out of 100 across 8 skills, quotes from their own call as evidence, what they said about Suraasa that did not match the verified facts, objections they did not handle, and a training recommendation (Ready for live calls, Nearly ready, Needs more practice, Needs coaching).
+- After each call: a score out of 100 on the Setter Evaluation Rubric (13 sections, 30 criteria), a subtotal for each part of the call, quotes from their own call as evidence, what they said about Suraasa that did not match the verified facts, objections they did not handle, and a training recommendation (Ready for live calls, Nearly ready, Needs more practice, Needs coaching).
 - A running summary of scored calls, average and best score.
 
 What the trainer gets: every practice call appears on the person's page with the transcript and report, exactly like a hiring call.
@@ -193,3 +193,31 @@ Groq retires models from time to time. The site tries each model in its list in 
 - **Code changes:** run `npm test`, then `npm run test:e2e`, then commit. Vercel redeploys by itself.
 - **If `apps-script/Code.gs` changed:** paste the new file into Apps Script, run `setupSheet` again (it keeps all data and adds any new columns), then **Deploy > Manage deployments**, pencil, **Version: New version**, **Deploy**. Do not use **New deployment**, because that changes the link.
 - **Recovery:** daily copies of the Sheet are in the Drive folder `Setter Assessment backups` (newest 14). The Sheet's own **File > Version history** also works.
+
+## The Setter Evaluation Rubric (Master 2.0)
+
+Hiring calls and intern practice calls are both marked on Suraasa's Setter Evaluation Rubric.
+
+| Part | Sections | Marks |
+|---|---|---|
+| Connecting | C1 Opening & Credibility (8), C2 Profiling Depth (7), C3 Goal Clarity & Transition (5) | 20 |
+| Augmenting | A1 Emotional Permission & Visioning (8), A2 Desire Building & Salary Positioning (10), A3 Anchoring the Why (7) | 25 |
+| Revealing | R1 Process Positioning (8), R2 Personalization & Gap Clarity (10), R3 Investment Framing & Readiness Check (12) | 30 |
+| Ending | E1 Handoff Strength (6), E2 Scarcity & Confirmation (5), E3 Closing Warmth & Homework (4) | 15 |
+| Professionalism & Emotional Intelligence | Listening, Tone, Empathy, Authority | 10 |
+
+- Each of the 30 criteria is marked in whole points against its own description from the rubric. 0 means that step never happened on the call.
+- Score bands: 85 and above Elite Setter, 70 to 84 Strong Performer, 55 to 69 Developing – Needs Coaching, below 55 Poor Performer – Needs Retraining.
+- A section still scores 0 if the AI cannot back it with words the candidate really said.
+- The site applies the rubric to the two built-in templates by itself the first time a Super Admin signs in after the update. Templates you created yourself are not touched, and calls already scored keep their old scores.
+- You can change any description, mark or band under **Assessments > Templates and marks**.
+
+Three things in the source sheet did not add up, and were settled like this. Change them in the template if you meant otherwise.
+
+1. "Self + Suraasa Credibility" says Max 4 but is described up to 5, and C1 totals 8. It is marked out of 5.
+2. "EBANT Extraction" says Max 5 but is described up to 4, and C2 totals 7. It is marked out of 4.
+3. A3 gives one 1 to 7 scale for both of its criteria. It is split into Emotional Depth (4) and Transition to Revealing (3).
+
+The AI reads the words of the call, not the sound. It judges tone and energy from wording and from how the teacher responds, so use the recording to check those two marks.
+
+The rubric expects setters to mention a salary range, the 5-step journey and an investment range. Add those under **Assessments > Product facts** and verify them, or the report will list them as "Not in verified facts".

@@ -103,7 +103,11 @@ async function open(viewport = { width: 1320, height: 900 }) {
   return page;
 }
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: false }); };
-const noOverflow = async (page, label) => { const w = await page.evaluate(() => [document.scrollingElement.scrollWidth, window.innerWidth]); assert.ok(w[0] <= w[1] + 1, `${label}: page is wider than the screen (${w[0]} > ${w[1]})`); };
+const noOverflow = async (page, label) => {
+  const w = await page.evaluate(() => [document.scrollingElement.scrollWidth, window.innerWidth,
+    [...document.querySelectorAll('body *')].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1).slice(-3).map((e) => `${e.tagName}.${e.className} "${(e.textContent || '').slice(0, 40)}"`).join(' | ')]);
+  assert.ok(w[0] <= w[1] + 1, `${label}: page is wider than the screen (${w[0]} > ${w[1]}): ${w[2]}`);
+};
 async function signIn(page, email, code) {
   await page.fill('input[type=email]', email); await page.fill('input[autocomplete=current-password]', code);
   await page.click('button[type=submit]');
@@ -249,7 +253,7 @@ await step('Call connects: rings, teacher speaks first out loud, then listens', 
   assert.ok(spoken.length >= 1 && /Meenakshi|class/i.test(spoken.join(' ')));
   const body = await cand.textContent('[data-testid=phone]');
   assert.ok(body.includes('Meenakshi Iyer') && body.includes('Connected') && body.includes('min left'));
-  for (const hidden of ['objection', 'rubric', 'Opening and Introduction']) assert.ok(!body.toLowerCase().includes(hidden.toLowerCase()));
+  for (const hidden of ['objection', 'rubric', 'Opening & Credibility']) assert.ok(!body.toLowerCase().includes(hidden.toLowerCase()));
   await shot(cand, '08-call');
 });
 
@@ -286,7 +290,7 @@ await step('Call completes when the teacher hangs up; it is scored and the candi
   await cand.waitForSelector('text=Your call result', { timeout: 20000 });
   await cand.waitForSelector('.ringscore');
   const text = await cand.textContent('body');
-  assert.ok(text.includes('65.5') && text.includes('Strengths'));
+  assert.ok(text.includes('70') && text.includes('Strengths'));
   for (const hidden of ['hiring recommendation', 'Detailed evaluation', 'Conduct', 'Borderline']) assert.ok(!text.includes(hidden), hidden);
   assert.ok(!/Recommended(?! next practice)/.test(text), 'the AI recommendation must not be shown to a candidate');
   assert.equal(await cand.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('sa.call.')).length), 0);
@@ -352,7 +356,7 @@ await step('Recruiter dashboard counts are right', async () => {
   const get = (label) => stats.find((s) => s.includes(label));
   assert.ok(get('Total candidates').startsWith('2'));
   assert.ok(get('Mock calls completed').startsWith('3'), get('Mock calls completed'));
-  assert.ok(get('Highest score').startsWith('65.5'));
+  assert.ok(get('Highest score').startsWith('70'));
   await shot(rec, '12-dashboard');
 });
 
@@ -375,16 +379,18 @@ await step('Leaderboard sorts, filters by date, and compares two candidates', as
   await rec.click('[data-testid=compare]');
   await rec.waitForSelector('text=Compare candidates');
   const text = await rec.textContent('table');
-  assert.ok(text.includes('Objection Handling') && text.includes('Conduct concern'));
+  assert.ok(text.includes('R3. Investment Framing') && text.includes('Conduct concern'));
   await shot(rec, '14-compare');
 });
 
-await step('Report shows all 10 parameters with evidence, the transcript, and a downloadable transcript', async () => {
+await step('Report shows all 13 rubric sections and their 30 criteria with evidence, the transcript, and a downloadable transcript', async () => {
   await rec.goto(url + '/#/session/' + sessionId);
   await rec.waitForSelector('text=AI hiring recommendation');
-  assert.equal(await rec.locator('[data-testid=param]').count(), 10);
+  assert.equal(await rec.locator('[data-testid=param]').count(), 13);
+  assert.equal(await rec.locator('[data-testid=criteria] li').count(), 30);
+  assert.ok((await rec.textContent('[data-testid=parts]')).includes('14 / 20'), 'Connecting subtotal: 6 + 5 + 3');
   const text = await rec.textContent('main');
-  for (const need of ['65.5', 'Recommended', 'Rohan Verma', 'SUR-0001', 'Meenakshi Iyer', 'Best response', 'Strengths', 'Practice exercises', 'A better response', 'Recommended next practice', 'Candidate, turn']) assert.ok(text.includes(need), need);
+  for (const need of ['70', 'Strong Performer', 'Connecting', 'Hook & Warm Opening', 'Recommended', 'Rohan Verma', 'SUR-0001', 'Meenakshi Iyer', 'Best response', 'Strengths', 'Practice exercises', 'A better response', 'Recommended next practice', 'Candidate, turn']) assert.ok(text.includes(need), need);
   await shot(rec, '15-report');
   await rec.click('button.tab:has-text("Transcript")');
   await rec.waitForSelector('.tline.c');
@@ -406,7 +412,7 @@ await step('Recruiter must give a reason to override the AI; the decision is rec
 
 await step('Human review is saved and appears under Calibration; setting a call aside returns the attempt', async () => {
   await rec.click('text=Score it yourself');
-  for (const input of await rec.locator('.modal input[type=number]').all()) await input.fill('5');
+  for (const input of await rec.locator('.modal input[type=number]').all()) await input.fill('2');
   await rec.click('.modal button:has-text("Save review")');
   await rec.waitForSelector('text=Edit your review');
   await rec.goto(url + '/#/assessments');
@@ -554,7 +560,7 @@ await step('Intern practice: admin adds the training pack and gives practice acc
   await ip.waitForSelector('[data-testid=recommendation]');
   const result = await ip.textContent('body');
   assert.ok(result.includes('Training recommendation') && !result.includes('hiring recommendation'));
-  assert.equal(await ip.locator('[data-testid=param]').count(), 8);
+  assert.equal(await ip.locator('[data-testid=param]').count(), 13);
   await shot(ip, '22-intern-result');
   // the recording made in the browser reached Drive in pieces and plays back from the result page
   const folder = [...world.gas.folders.values()].find((f) => f.getId().includes('recordings'));
@@ -582,9 +588,9 @@ await step('Training page: trainers see each intern\'s practice, the team\'s wea
   await tp.click('a.nav:has-text("Training")');
   await tp.waitForSelector('[data-testid=training-table]');
   const row = await tp.textContent('[data-testid=training-table] tbody tr:has-text("Isha Intern")');
-  assert.ok(row.includes('63') && row.includes('Needs more practice') && row.includes('Discovery and questioning'), row);
+  assert.ok(row.includes('70') && row.includes('Nearly ready') && row.includes('E3. Closing Warmth & Homework'), row);
   assert.ok((await tp.textContent('[data-testid=training-stats]')).includes('Interns with practice access'));
-  assert.equal(await tp.locator('[data-testid=team-skills] .bar').count(), 8);
+  assert.equal(await tp.locator('[data-testid=team-skills] .bar').count(), 13);
   await shot(tp, '24-training');
   await tp.click('a.nav:has-text("Leaderboard")');
   await tp.waitForSelector('h1:has-text("Leaderboard")');

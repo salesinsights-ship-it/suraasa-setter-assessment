@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWorld, playCall, GOOD_LINES } from './sim/world.mjs';
-import { SEED_PERSONAS, DEFAULT_TEMPLATE } from '../server/seed.js';
+import { SEED_PERSONAS, DEFAULT_TEMPLATE, SETTER_RUBRIC } from '../server/seed.js';
+
+/** A template of the older kind, with no criteria: each parameter gets a level from 0 to 4. Teams can still build these. */
+const LEVEL_TEMPLATE = { id: 't_level', name: 'Level-marked', version: 1, active: true, data: {
+  duration_min: 8, attempts: 1, min_turns: 4, candidate_feedback: 'summary', show_previous: true, thresholds: { strong: 80, recommended: 65, borderline: 50 },
+  parameters: [['opening', 10], ['rapport', 10], ['clarity', 10], ['listening', 10], ['discovery', 15], ['product', 10], ['objection', 15], ['persuasion', 10], ['qualification', 5], ['closing', 5]].map(([key, max]) => ({ key, name: key, max, guide: '' })),
+} };
+const RUBRIC_MARKS = [6, 5, 3, 6, 7, 5, 6, 8, 9, 4, 3, 2, 6]; // the stand-in AI gives one point less than the maximum on each of the 30 criteria
 import { teacherSystem, cleanReply } from '../server/prompts.js';
 import { buildReport, validateTemplate, verifyQuote, candidateTurns, norm } from '../server/rubric.js';
 import { hashCode } from '../server/auth.js';
@@ -78,7 +85,9 @@ test('First run: 10 teachers, a 100-mark rubric and unverified product facts are
   assert.equal(home.personas.length, 10);
   assert.equal(new Set(home.personas.map((p) => p.name)).size, 10);
   assert.equal(home.templates[0].data.parameters.reduce((a, q) => a + q.max, 0), 100);
-  assert.deepEqual(home.templates[0].data.parameters.map((q) => q.max), [10, 10, 10, 10, 15, 10, 15, 10, 5, 5]);
+  assert.deepEqual(home.templates[0].data.parameters.map((q) => q.max), [8, 7, 5, 8, 10, 7, 8, 10, 12, 6, 5, 4, 10]);
+  assert.equal(home.templates[0].data.parameters.flatMap((q) => q.criteria).length, 30);
+  assert.deepEqual(home.templates[0].data.thresholds, { strong: 85, recommended: 70, borderline: 55 });
   assert.ok(home.knowledge.length >= 10 && home.knowledge.every((k) => k.status === 'unverified'));
 });
 
@@ -168,16 +177,19 @@ test('Call: scored out of 100 by the app, with evidence checked against the tran
   assert.equal(done.status, 'ended');
   assert.equal((await w.rpc('score', { session_id }, candidate)).status, 'scored');
   const { report, session } = await w.rpc('getSession', { session_id }, recruiter);
-  assert.equal(report.params.length, 10);
-  // levels 3,3,2,3,2,2,3,2,3,4 on maxima 10,10,10,10,15,10,15,10,5,5
-  assert.deepEqual(report.params.map((q) => q.marks), [7.5, 7.5, 5, 7.5, 7.5, 5, 11.5, 5, 4, 5]);
-  assert.equal(report.total, 65.5);
+  assert.equal(report.params.length, 13);
+  assert.deepEqual(report.params.map((q) => q.marks), RUBRIC_MARKS);
+  for (const q of report.params) assert.equal(q.marks, q.criteria.reduce((a, c) => a + c.marks, 0), q.key);
+  assert.deepEqual(report.params[0].criteria.map((c) => [c.key, c.marks, c.max]), [['hook', 2, 3], ['credibility', 4, 5]]);
+  assert.equal(report.total, 70);
   assert.equal(report.total, report.params.reduce((a, q) => a + q.marks, 0));
-  assert.equal(report.category, 'Good');
+  assert.deepEqual([report.category, report.band], ['Strong Performer', 1]);
   assert.equal(report.hiring.recommendation, 'Recommended');
   assert.equal(report.coverage, 100);
-  assert.equal(report.strongest.key, 'closing');
-  assert.equal(session.total, 65.5);
+  assert.equal(report.strongest.key, 'r2_gaps');
+  assert.equal(session.total, 70);
+  const asked = w.groq.state.calls.at(-1).messages[1].content;
+  assert.ok(asked.includes('hook, 0 to 3 (Hook & Warm Opening)') && asked.includes('You have the words only, not the audio'));
   assert.equal(report.product.checked, false, 'no facts are verified yet, so accuracy was not checked');
   assert.equal(report.recommendations.strengths.length, 3);
   assert.equal(report.recommendations.next_scenario.persona_id, 'p04');
@@ -209,7 +221,7 @@ test('Scoring: a misleading claim caps the recommendation at Borderline whatever
   const { report } = await w.rpc('getSession', { session_id }, recruiter);
   assert.equal(report.conduct[0].type, 'misleading');
   assert.equal(report.conduct[0].verified, true);
-  assert.equal(report.total, 65.5);
+  assert.equal(report.total, 70);
   assert.equal(report.hiring.recommendation, 'Borderline');
   assert.ok(report.hiring.basis.some((b) => /Conduct concern/.test(b)));
 });
@@ -288,7 +300,7 @@ test('Teacher engine: falls back when a model is retired, blocks leaked instruct
   const sys = w.groq.state.calls.at(-1).messages[0].content;
   assert.ok(sys.includes('Meenakshi Iyer') && sys.includes('Level 1'));
   // over time: the server ends the call itself
-  w.clock.t += 11 * 60000;
+  w.clock.t += 16 * 60000;
   const items = start.items.concat(r.items, leak.items);
   const late = await w.rpc('turn', { callToken: start.callToken, items, chain: leak.chain, text: 'One more thing' }, candidate);
   assert.equal(late.ended, true);
@@ -316,14 +328,23 @@ test('Template rules: marks must total 100 and thresholds must descend', async (
   const { w, admin } = await ready();
   const d = structuredClone(DEFAULT_TEMPLATE.data);
   assert.deepEqual(validateTemplate(d), []);
-  d.parameters[0].max = 20;
+  d.parameters[0].criteria[0].max = 4;
+  assert.match(validateTemplate(d)[0], /criteria in "C1. Opening & Credibility" add up to 9/);
+  d.parameters[0].max = 9;
   assert.match(validateTemplate(d)[0], /add up to 100/);
   const bad = await w.raw('saveTemplate', { template: { name: 'X', data: d } }, admin);
   assert.equal(bad.status, 400);
-  d.parameters[0].max = 10; d.parameters[4].max = 20; d.parameters[6].max = 10; d.thresholds = { strong: 85, recommended: 70, borderline: 55 };
+  d.parameters[1].criteria[0].max = 2; d.parameters[1].max = 6; d.thresholds = { strong: 90, recommended: 75, borderline: 60 };
   const ok = await w.rpc('saveTemplate', { template: { id: 't_default', name: 'Changed', data: d } }, admin);
   assert.ok(ok.ok);
-  assert.equal((await w.rpc('adminHome', {}, admin)).templates[0].version, 2);
+  const saved = (await w.rpc('adminHome', {}, admin)).templates[0];
+  assert.equal(saved.version, 2);
+  assert.deepEqual(saved.data, d, 'groups, criteria, their descriptions and the band names all survive a save');
+  // The older kind of template, marked by level with no criteria, is still valid.
+  const lv = structuredClone(LEVEL_TEMPLATE.data);
+  assert.deepEqual(validateTemplate(lv), []);
+  lv.parameters[0].max = 20;
+  assert.match(validateTemplate(lv)[0], /add up to 100/);
 });
 
 test('Reports keep the rubric version they were scored with', async () => {
@@ -331,11 +352,12 @@ test('Reports keep the rubric version they were scored with', async () => {
   const { session_id } = await playCall(w, candidate, assignmentId, GOOD_LINES);
   await w.rpc('score', { session_id }, candidate);
   const d = structuredClone(DEFAULT_TEMPLATE.data);
-  d.parameters[4].max = 20; d.parameters[6].max = 10;
+  d.thresholds = { strong: 95, recommended: 90, borderline: 80 };
   await w.rpc('saveTemplate', { template: { id: 't_default', name: 'Changed', data: d } }, admin);
   const { report, session } = await w.rpc('getSession', { session_id }, admin);
   assert.equal(report.meta.template_version, 1);
-  assert.equal(report.total, 65.5);
+  assert.equal(report.total, 70);
+  assert.equal(report.category, 'Strong Performer');
   assert.equal(session.template_version, 1);
 });
 
@@ -360,11 +382,11 @@ test('Human review is stored beside the AI score for calibration', async () => {
   const { session_id } = await playCall(w, candidate, assignmentId, GOOD_LINES);
   await w.rpc('score', { session_id }, candidate);
   const scores = Object.fromEntries(DEFAULT_TEMPLATE.data.parameters.map((q) => [q.key, q.max / 2]));
-  assert.equal((await w.raw('humanReview', { session_id, scores: { ...scores, opening: 99 } }, recruiter)).status, 400);
+  assert.equal((await w.raw('humanReview', { session_id, scores: { ...scores, c1_opening: 99 } }, recruiter)).status, 400);
   await w.rpc('humanReview', { session_id, scores, note: 'Fair' }, recruiter);
   const { session } = await w.rpc('getSession', { session_id }, recruiter);
   assert.equal(session.human.total, 50);
-  assert.equal(session.total, 65.5);
+  assert.equal(session.total, 70);
 });
 
 test('Teacher management: add, edit, deactivate and preview without touching code', async () => {
@@ -416,7 +438,7 @@ test('Retention: old transcripts and reports are deleted by the daily job when a
   const view = await w.rpc('getSession', { session_id }, admin);
   assert.equal(view.transcript, null);
   assert.equal(view.session.purged, true);
-  assert.equal(view.session.total, 65.5, 'the score summary is kept');
+  assert.equal(view.session.total, 70, 'the score summary is kept');
 });
 
 test('Backups: the daily job is installed once and keeps the newest 14 copies', () => {
@@ -432,7 +454,7 @@ test('buildReport clamps bad AI output instead of trusting it', () => {
   const items = [{ r: 't', x: 'Hello?' }, { r: 'c', x: 'Hello this is Rohan calling from Suraasa today' }];
   const report = buildReport({
     raw: { parameters: { opening: { level: 99, evidence: [{ turn: 1, quote: 'Hello this is Rohan calling' }] }, rapport: { level: 'high' } }, conduct: [{ type: 'made_up_type', quote: 'x' }], recommendations: { next_scenario: { persona_id: 'nope' } } },
-    items, template: DEFAULT_TEMPLATE, personas: [{ id: 'p02', name: 'B', active: true }], meta: { persona_id: 'p01', facts_used: 0 },
+    items, template: LEVEL_TEMPLATE, personas: [{ id: 'p02', name: 'B', active: true }], meta: { persona_id: 'p01', facts_used: 0 },
   });
   assert.equal(report.params[0].marks, 10);
   assert.equal(report.params[1].marks, 0);
@@ -546,7 +568,7 @@ test('Live voice: the browser-reported transcript is saved, tidied and clearly m
   assert.ok(view.transcript.at(-1).t <= (start.duration_sec + 120) * 1000);
   assert.equal(view.report.meta.unverified, true);
   assert.ok(view.report.hiring.basis.some((b) => /could not be checked by the server/.test(b)));
-  assert.equal(view.report.params.length, 10);
+  assert.equal(view.report.params.length, 13);
   // a standard voice call still refuses an unsigned transcript
   const { w: w2, candidate: c2, assignmentId: a2 } = await ready();
   const s2 = await w2.rpc('startCall', { assignment_id: a2 }, c2);
@@ -574,7 +596,7 @@ async function practiceReady(extra = {}) {
   return { ...base, pack, intern, internCode: c.access_code, internId: c.id, practiceId: a.id, practiceSave: a };
 }
 
-test('Training pack: adds 10 teachers and the 8-skill rubric once, and only a Super Admin can add it', async () => {
+test('Training pack: adds 10 teachers and the practice template once, and only a Super Admin can add it', async () => {
   const { w, admin, recruiter } = await ready();
   assert.equal((await w.raw('installTraining', {}, recruiter)).status, 403);
   const first = await w.rpc('installTraining', {}, admin);
@@ -584,7 +606,8 @@ test('Training pack: adds 10 teachers and the 8-skill rubric once, and only a Su
   const home = await w.rpc('adminHome', {}, admin);
   assert.equal(home.personas.length, 20);
   const tpl = home.templates.find((t) => t.id === 't_training');
-  assert.deepEqual(tpl.data.parameters.map((q) => q.max), [15, 10, 15, 15, 15, 15, 10, 5]);
+  assert.deepEqual(tpl.data.parameters, SETTER_RUBRIC.parameters);
+  assert.equal(tpl.data.candidate_feedback, 'full');
   assert.deepEqual(validateTemplate(TRAINING_TEMPLATE.data), []);
 });
 
@@ -624,7 +647,7 @@ test('Practice: an intern picks any teacher, calls up to 20 minutes, and the lim
   assert.ok((await w.rpc('startCall', { assignment_id: practiceId, persona_id: 'tr01' }, next)).ok);
 });
 
-test('Practice: scored on the 8 skills, and the intern sees a training recommendation, never a hiring one', async () => {
+test('Practice: scored on the Setter Evaluation Rubric, and the intern sees a training recommendation, never a hiring one', async () => {
   const { w, intern, practiceId, recruiter } = await practiceReady();
   const { session_id } = await playCall(w, intern, practiceId, PRACTICE_LINES, { personaId: 'tr04' });
   assert.equal((await w.rpc('score', { session_id }, intern)).status, 'scored');
@@ -632,18 +655,19 @@ test('Practice: scored on the 8 skills, and the intern sees a training recommend
   assert.ok(evalPrompt.includes('practising before speaking to real teachers'));
   const mine = await w.rpc('getSession', { session_id }, intern);
   assert.equal(mine.view, 'candidate');
-  assert.equal(mine.report.params.length, 8);
-  // levels 3,3,2,3,2,2,3,2 on maxima 15,10,15,15,15,15,10,5
-  assert.deepEqual(mine.report.params.map((q) => q.marks), [11.5, 7.5, 7.5, 11.5, 7.5, 7.5, 7.5, 2.5]);
-  assert.equal(mine.report.total, 63);
-  assert.equal(mine.report.training.recommendation, 'Needs more practice');
+  assert.equal(mine.report.params.length, 13);
+  assert.deepEqual(mine.report.params.map((q) => q.marks), RUBRIC_MARKS);
+  assert.deepEqual(mine.report.params[12].criteria.map((c) => c.marks), [2, 2, 1, 1], 'the intern sees each criterion');
+  assert.equal(mine.report.total, 70);
+  assert.deepEqual([mine.report.category, mine.report.band], ['Strong Performer', 1]);
+  assert.equal(mine.report.training.recommendation, 'Nearly ready');
   assert.ok(!('hiring' in mine.report), 'the hiring recommendation is never sent to an intern');
   assert.ok(Array.isArray(mine.report.product.claims));
   const staff = await w.rpc('getSession', { session_id }, recruiter);
-  assert.equal(staff.session.recommendation, 'Needs more practice');
+  assert.equal(staff.session.recommendation, 'Nearly ready');
   assert.equal(staff.session.flags.practice, true);
   const home = await w.rpc('myHome', {}, intern);
-  assert.deepEqual([home.sessions[0].practice, home.sessions[0].total, home.sessions[0].feedback], [true, 63, true]);
+  assert.deepEqual([home.sessions[0].practice, home.sessions[0].total, home.sessions[0].feedback], [true, 70, true]);
 });
 
 test('Practice does not change hiring assessments: no training recommendation, and the 15-minute cap on old inputs still holds at 20', async () => {
@@ -846,4 +870,60 @@ test('Sheet script: a transcript is found by its key however many others are sto
   assert.ok(rows.length >= 2);
   sheet.cells.push([rows[0][0], rows[0][1], rows[0][2]]); sheet.cells.splice(sheet.cells.indexOf(rows[0]), 1);
   assert.deepEqual(await w.deps.store.getBlob('Transcripts', 's5'), big(5));
+});
+
+test('Rubric: criteria are marked in whole points, clamped, and wiped when the quote is not in the transcript', () => {
+  const items = [{ r: 't', x: 'Hello?' }, { r: 'c', x: 'Hello Meenakshi ma\'am, this is Rohan calling from Suraasa today' }];
+  const ev = [{ turn: 1, quote: 'this is Rohan calling from Suraasa' }];
+  const report = buildReport({
+    raw: { parameters: {
+      c1_opening: { criteria: { hook: 9, credibility: 2.4 }, evidence: ev },               // 9 is clamped to 3, 2.4 rounds to 2
+      c2_profiling: { criteria: { profiling: 3, ebant: 4 }, evidence: [{ turn: 1, quote: 'words the candidate never said at all' }] }, // no real quote
+      c3_goal: { criteria: { goal: 'lots', transition: -3 }, evidence: ev },               // nonsense scores 0
+      a1_visioning: { level: 2, evidence: ev },                                             // no criteria given: the level is spread across them
+    } },
+    items, template: DEFAULT_TEMPLATE, personas: [], meta: { persona_id: 'p01', facts_used: 0 },
+  });
+  const by = Object.fromEntries(report.params.map((q) => [q.key, q]));
+  assert.deepEqual([by.c1_opening.marks, by.c1_opening.criteria.map((c) => c.marks)], [5, [3, 2]]);
+  assert.deepEqual([by.c2_profiling.marks, by.c2_profiling.no_evidence, by.c2_profiling.criteria.map((c) => c.marks)], [0, true, [0, 0]]);
+  assert.equal(by.c3_goal.marks, 0);
+  assert.deepEqual(by.a1_visioning.criteria.map((c) => c.marks), [2, 3]);
+  assert.equal(by.e1_handoff.marks, 0, 'a part of the call that never happened scores 0');
+  assert.equal(report.total, 10);
+  assert.deepEqual([report.category, report.band], ['Poor Performer – Needs Retraining', 3]);
+  assert.equal(report.coverage, 59, '10 of the 17 marks the AI proposed were backed by a real quote');
+  assert.ok(report.params.every((q) => q.group));
+});
+
+test('Rubric update: a site set up on the old rubrics moves to the Setter Evaluation Rubric once, and later edits are kept', async () => {
+  const w = makeWorld();
+  let admin = await w.signIn(w.admin.email, w.admin.code);
+  await w.rpc('adminHome', {}, admin);
+  await w.rpc('installTraining', {}, admin);
+  // Put the Sheet back to how a site looked before this change: old rubrics, shorter hiring call, no marker.
+  const old = (id, minutes) => ({ id, name: 'Old', data: { ...structuredClone(LEVEL_TEMPLATE.data), duration_min: minutes, candidate_feedback: id === 't_training' ? 'full' : 'summary' } });
+  await w.rpc('saveTemplate', { template: old('t_default', 8) }, admin);
+  await w.rpc('saveTemplate', { template: old('t_training', 20) }, admin);
+  const own = await w.rpc('saveTemplate', { template: { name: 'Our own', data: structuredClone(LEVEL_TEMPLATE.data) } }, admin);
+  const sheet = w.gas.sheets.get('Config');
+  sheet.cells.splice(1 + sheet.cells.slice(1).findIndex((r) => r[0] === 'rubric'), 1);
+
+  admin = await w.signIn(w.admin.email, w.admin.code);
+  const home = await w.rpc('adminHome', {}, admin);
+  const t = Object.fromEntries(home.templates.map((x) => [x.id, x]));
+  assert.deepEqual(t.t_default.data.parameters, SETTER_RUBRIC.parameters);
+  assert.deepEqual(t.t_training.data.parameters, SETTER_RUBRIC.parameters);
+  assert.deepEqual([t.t_default.data.duration_min, t.t_training.data.duration_min], [15, 20], 'a short hiring call is lengthened, a longer one is kept');
+  assert.deepEqual([t.t_default.data.candidate_feedback, t.t_training.data.candidate_feedback], ['summary', 'full'], 'other settings are kept');
+  assert.deepEqual(t.t_default.data.thresholds, { strong: 85, recommended: 70, borderline: 55 });
+  assert.deepEqual([t.t_default.version, t.t_training.version], [3, 3]);
+  assert.equal(t[own.id].data.parameters.length, 10, 'a template the team made is left alone');
+
+  // A later change by the team is not overwritten the next time someone signs in.
+  const mine = structuredClone(t.t_default.data); mine.thresholds = { strong: 90, recommended: 75, borderline: 60 };
+  await w.rpc('saveTemplate', { template: { id: 't_default', name: 'Tuned', data: mine } }, admin);
+  admin = await w.signIn(w.admin.email, w.admin.code);
+  const after = (await w.rpc('adminHome', {}, admin)).templates.find((x) => x.id === 't_default');
+  assert.deepEqual([after.data.thresholds.strong, after.version], [90, 4]);
 });

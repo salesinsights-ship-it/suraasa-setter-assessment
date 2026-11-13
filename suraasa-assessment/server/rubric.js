@@ -44,7 +44,20 @@ export function validateTemplate(data) {
     if (!str(q.name, 60)) errors.push('Every parameter needs a name.');
     if (!Number.isFinite(q.max) || q.max < 1 || q.max > 60 || q.max * 2 !== Math.round(q.max * 2)) errors.push(`Marks for "${q.name}" must be between 1 and 60.`);
     sum += Number(q.max) || 0;
+    // A parameter may be broken into criteria, each marked in whole points. Their marks must add up to the parameter's.
+    if (q.criteria?.length) {
+      const seen = new Set();
+      for (const c of q.criteria) {
+        if (!/^[a-z][a-z0-9_]{1,23}$/.test(c.key || '') || seen.has(c.key)) errors.push(`"${q.name}" has a criterion with a missing or repeated key.`);
+        seen.add(c.key);
+        if (!str(c.name, 60)) errors.push(`Every criterion in "${q.name}" needs a name.`);
+        if (!Number.isInteger(c.max) || c.max < 1 || c.max > 20) errors.push(`Marks for "${c.name}" must be a whole number from 1 to 20.`);
+      }
+      const inner = q.criteria.reduce((a, c) => a + (Number(c.max) || 0), 0);
+      if (inner !== q.max) errors.push(`The criteria in "${q.name}" add up to ${inner}, but it is worth ${q.max}.`);
+    }
   }
+  if (data?.bands && !(Array.isArray(data.bands) && data.bands.length === 4 && data.bands.every((b) => str(b, 60)))) errors.push('Give a name to each of the four score bands.');
   if (sum !== 100) errors.push(`Marks must add up to 100. They add up to ${sum}.`);
   const th = data?.thresholds || {};
   if (!(th.strong > th.recommended && th.recommended > th.borderline && th.borderline > 0 && th.strong <= 100)) errors.push('Thresholds must go down in order: Strongly Recommended, Recommended, Borderline.');
@@ -55,16 +68,18 @@ export function validateTemplate(data) {
   return errors;
 }
 
-export function categoryFor(percent, th) {
-  if (percent >= th.strong) return 'Excellent';
-  if (percent >= th.recommended) return 'Good';
-  if (percent >= th.borderline) return 'Developing';
-  return 'Needs improvement';
+const BANDS = ['Excellent', 'Good', 'Developing', 'Needs improvement'];
+export const bandFor = (percent, th) => (percent >= th.strong ? 0 : percent >= th.recommended ? 1 : percent >= th.borderline ? 2 : 3);
+
+/** The name of the score band. A template can carry its own four names, such as "Elite Setter". */
+export function categoryFor(percent, th, bands) {
+  return (Array.isArray(bands) && bands.length === 4 ? bands : BANDS)[bandFor(percent, th)];
 }
 
 /**
  * Turns the AI's raw JSON into a report.
- * - marks = max x level / 4, to the nearest half mark
+ * - a parameter with criteria: each criterion gets whole points from 0 to its maximum, and the parameter is their sum
+ * - a parameter without criteria: marks = max x level / 4, to the nearest half mark
  * - a parameter with no quote found in the transcript scores 0 ("No evidence")
  * - conduct problems backed by a real quote cap the recommendation at Borderline
  */
@@ -84,10 +99,24 @@ export function buildReport({ raw, items, template, personas, meta }) {
     level = Math.max(0, Math.min(4, level));
     const evidence = (Array.isArray(r.evidence) ? r.evidence : []).slice(0, 4).map(quote).filter((e) => e.quote);
     const backed = evidence.some((e) => e.verified);
-    const noEvidence = level > 0 && !backed;
+    // Criteria are marked one by one. If the AI skipped them, its overall level is spread across them instead.
+    const given = r.criteria && typeof r.criteria === 'object' ? r.criteria : null;
+    let criteria = null;
+    let proposed = half((def.max * level) / 4);
+    if (def.criteria?.length) {
+      criteria = def.criteria.map((c) => {
+        const v = given ? Math.round(Number(given[c.key])) : Math.round((c.max * level) / 4);
+        return { key: c.key, name: c.name, max: c.max, marks: Number.isFinite(v) ? Math.max(0, Math.min(c.max, v)) : 0 };
+      });
+      proposed = criteria.reduce((a, c) => a + c.marks, 0);
+      level = Math.round((4 * proposed) / def.max);
+    }
+    const noEvidence = proposed > 0 && !backed;
+    if (noEvidence && criteria) criteria = criteria.map((c) => ({ ...c, marks: 0 }));
     return {
-      key: def.key, name: def.name, max: def.max,
-      level, marks: noEvidence ? 0 : half((def.max * level) / 4), no_evidence: noEvidence,
+      key: def.key, name: def.name, max: def.max, ...(def.group ? { group: def.group } : {}),
+      level, proposed, marks: noEvidence ? 0 : proposed, no_evidence: noEvidence,
+      ...(criteria ? { criteria } : {}),
       did_well: str(r.did_well), did_wrong: str(r.did_wrong), missed: str(r.missed), improve: str(r.improve),
       evidence,
     };
@@ -95,7 +124,7 @@ export function buildReport({ raw, items, template, personas, meta }) {
 
   const total = half(params.reduce((a, q) => a + q.marks, 0));
   const percent = total; // marks are out of 100
-  const claimed = params.reduce((a, q) => a + half((q.max * q.level) / 4), 0);
+  const claimed = params.reduce((a, q) => a + q.proposed, 0);
   const coverage = claimed > 0 ? Math.min(100, Math.round((params.reduce((a, q) => a + q.marks, 0) / claimed) * 100)) : 0;
   const ranked = [...params].sort((a, b) => b.marks / b.max - a.marks / a.max);
 
@@ -110,7 +139,7 @@ export function buildReport({ raw, items, template, personas, meta }) {
   const inaccurate = claims.filter((c) => c.verdict === 'inaccurate');
 
   // Recommendation: score band first, then caps that no score can override.
-  let rec = percent >= th.strong ? 0 : percent >= th.recommended ? 1 : percent >= th.borderline ? 2 : 3;
+  let rec = bandFor(percent, th);
   const basis = [`Score ${total} out of 100.`];
   const cap = (to, why) => { if (rec < to) { rec = to; basis.push(why); } };
   if (provenConduct.length) cap(2, `Conduct concern on the call (${[...new Set(provenConduct.map((c) => c.type.replace(/_/g, ' ')))].join(', ')}), so the recommendation cannot be higher than Borderline.`);
@@ -139,7 +168,7 @@ export function buildReport({ raw, items, template, personas, meta }) {
     v: 1,
     meta,
     params, total, percent, coverage,
-    category: categoryFor(percent, th),
+    category: categoryFor(percent, th, template.data.bands), band: bandFor(percent, th),
     strongest: ranked[0] ? { key: ranked[0].key, name: ranked[0].name } : null,
     weakest: ranked.length ? { key: ranked[ranked.length - 1].key, name: ranked[ranked.length - 1].name } : null,
     analysis: {
@@ -173,7 +202,7 @@ export function reportForCandidate(report, policy) {
   const base = {
     v: report.v, limited: true,
     meta: { persona_name: report.meta.persona_name, difficulty: report.meta.difficulty, level: report.meta.level, started_at: report.meta.started_at, duration_sec: report.meta.duration_sec, candidate_name: report.meta.candidate_name, candidate_code: report.meta.candidate_code },
-    total: report.total, percent: report.percent, category: report.category,
+    total: report.total, percent: report.percent, category: report.category, band: report.band,
     strongest: report.strongest, weakest: report.weakest,
     recommendations: { ...report.recommendations },
   };
@@ -182,7 +211,7 @@ export function reportForCandidate(report, policy) {
   if (policy === 'summary') return base;
   return {
     ...base,
-    params: report.params.map((q) => ({ key: q.key, name: q.name, max: q.max, marks: q.marks, no_evidence: q.no_evidence, did_well: q.did_well, did_wrong: q.did_wrong, missed: q.missed, improve: q.improve, evidence: q.evidence })),
+    params: report.params.map((q) => ({ key: q.key, name: q.name, max: q.max, group: q.group, criteria: q.criteria, marks: q.marks, no_evidence: q.no_evidence, did_well: q.did_well, did_wrong: q.did_wrong, missed: q.missed, improve: q.improve, evidence: q.evidence })),
     analysis: report.analysis,
   };
 }

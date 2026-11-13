@@ -26,9 +26,9 @@ function TemplateEditor({ start, canEdit, onClose }) {
           </div>
           <h3>Score needed for each recommendation</h3>
           <div className="grid g3">
-            <Field label="Strongly Recommended, from"><Input type="number" min="1" max="100" value={d.thresholds.strong} onChange={(e) => setD({ thresholds: { ...d.thresholds, strong: Number(e.target.value) } })} /></Field>
-            <Field label="Recommended (pass mark), from"><Input type="number" min="1" max="100" value={d.thresholds.recommended} onChange={(e) => setD({ thresholds: { ...d.thresholds, recommended: Number(e.target.value) } })} /></Field>
-            <Field label="Borderline, from"><Input type="number" min="1" max="100" value={d.thresholds.borderline} onChange={(e) => setD({ thresholds: { ...d.thresholds, borderline: Number(e.target.value) } })} /></Field>
+            <Field label={(d.bands?.[0] ? d.bands[0] + ' (Strongly Recommended)' : 'Strongly Recommended') + ', from'}><Input type="number" min="1" max="100" value={d.thresholds.strong} onChange={(e) => setD({ thresholds: { ...d.thresholds, strong: Number(e.target.value) } })} /></Field>
+            <Field label={(d.bands?.[1] ? d.bands[1] + ' (Recommended, pass mark)' : 'Recommended (pass mark)') + ', from'}><Input type="number" min="1" max="100" value={d.thresholds.recommended} onChange={(e) => setD({ thresholds: { ...d.thresholds, recommended: Number(e.target.value) } })} /></Field>
+            <Field label={(d.bands?.[2] ? d.bands[2] + ' (Borderline)' : 'Borderline') + ', from'}><Input type="number" min="1" max="100" value={d.thresholds.borderline} onChange={(e) => setD({ thresholds: { ...d.thresholds, borderline: Number(e.target.value) } })} /></Field>
           </div>
           <div className="grid g2">
             <Field label="What candidates see after a call"><Select value={d.candidate_feedback} onChange={(e) => setD({ candidate_feedback: e.target.value })} options={[['none', 'Nothing: a "submitted" message only'], ['summary', 'Score, strengths and areas to improve'], ['full', 'Full feedback on every skill']]} /></Field>
@@ -41,16 +41,32 @@ function TemplateEditor({ start, canEdit, onClose }) {
               <div className="row wrap">
                 <div style={{ flex: '2 1 200px' }}><Input aria-label="Parameter name" placeholder="Name" value={p.name} onChange={(e) => setP(i, { name: e.target.value })} /></div>
                 <div style={{ flex: '1 1 120px' }}><Input aria-label="Key" placeholder="key" value={p.key} onChange={(e) => setP(i, { key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })} /></div>
-                <div style={{ width: 90 }}><Input aria-label="Marks" type="number" min="1" max="60" value={p.max} onChange={(e) => setP(i, { max: Number(e.target.value) })} /></div>
+                <div style={{ width: 90 }}><Input aria-label="Marks" type="number" min="1" max="60" value={p.max} disabled={!!p.criteria?.length} title={p.criteria?.length ? 'The total of the criteria below' : undefined} onChange={(e) => setP(i, { max: Number(e.target.value) })} /></div>
                 {canEdit && <Btn size="sm" kind="danger" onClick={() => setD({ parameters: d.parameters.filter((_, j) => j !== i) })}>Remove</Btn>}
               </div>
               <Area aria-label="What good looks like" placeholder="What good looks like, and what to mark down" value={p.guide || ''} onChange={(e) => setP(i, { guide: e.target.value })} style={{ minHeight: 54 }} />
+              {p.criteria?.length > 0 && (
+                <div className="col gap-s" data-testid="criteria-edit">
+                  {p.criteria.map((c, k) => {
+                    const setC = (patch) => { const criteria = p.criteria.map((x, j) => (j === k ? { ...x, ...patch } : x)); setP(i, { criteria, max: criteria.reduce((a, x) => a + (Number(x.max) || 0), 0) }); };
+                    return (
+                      <div key={c.key} className="col gap-s" style={{ borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+                        <div className="row wrap">
+                          <div style={{ flex: '2 1 200px' }}><Input aria-label="Criterion name" value={c.name} onChange={(e) => setC({ name: e.target.value })} /></div>
+                          <div style={{ width: 90 }}><Input aria-label={'Marks for ' + c.name} type="number" min="1" max="20" step="1" value={c.max} onChange={(e) => setC({ max: Number(e.target.value) })} /></div>
+                        </div>
+                        <Area aria-label={'What each mark means for ' + c.name} value={c.levels || ''} onChange={(e) => setC({ levels: e.target.value })} style={{ minHeight: 54 }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ))}
           {canEdit && <div><Btn size="sm" onClick={() => setD({ parameters: [...d.parameters, { key: 'new_' + (d.parameters.length + 1), name: '', max: 5, guide: '' }] })}>Add a parameter</Btn></div>}
           <label className="row small"><input type="checkbox" checked={t.active} onChange={(e) => setT({ ...t, active: e.target.checked })} />Active (can be used for new assignments)</label>
         </fieldset>
-        <p className="tiny muted">Saving a change creates a new version. Calls already scored keep the version they were scored with. The keys clarity, objection and closing feed the leaderboard columns.</p>
+        <p className="tiny muted">Saving a change creates a new version. Calls already scored keep the version they were scored with. In the Setter Evaluation Rubric each criterion is marked in whole points against its own description, and 0 means it was not attempted.</p>
         {canEdit && <div className="row"><Btn kind="primary" type="submit" busy={busy} disabled={sum !== 100}>Save template</Btn><Btn onClick={onClose}>Cancel</Btn></div>}
       </form>
     </Modal>

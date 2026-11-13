@@ -18,13 +18,21 @@ function Moment({ title, m }) {
 export default function ReportView({ report, staff }) {
   const m = report.meta;
   const full = !!report.params;
+  // Where the rubric is in parts (Connecting, Augmenting, ...), show a subtotal for each part first.
+  const parts = [];
+  for (const q of report.params || []) {
+    if (!q.group) continue;
+    let g = parts.find((x) => x.name === q.group);
+    if (!g) parts.push(g = { name: q.group, marks: 0, max: 0 });
+    g.marks += q.marks; g.max += q.max;
+  }
   return (
     <div className="col gap-l">
       <div className="card">
         <div className="row gap-l wrap">
           <ScoreRing value={report.total} />
           <div className="grow">
-            <div className="row wrap gap-s"><Badge tone={report.percent >= 65 ? 'good' : report.percent >= 50 ? 'warn' : 'bad'}>{report.category}</Badge><span className="small muted">{report.percent}%</span></div>
+            <div className="row wrap gap-s"><Badge tone={report.band != null ? ['good', 'good', 'warn', 'bad'][report.band] : report.percent >= 65 ? 'good' : report.percent >= 50 ? 'warn' : 'bad'}>{report.category}</Badge><span className="small muted">{report.percent}%</span></div>
             <dl className="kv mt">
               <dt>Candidate</dt><dd><b>{m.candidate_name}</b> · {m.candidate_code}</dd>
               <dt>Date</dt><dd>{fmtDateTime(m.started_at)}</dd>
@@ -66,11 +74,25 @@ export default function ReportView({ report, staff }) {
       {full && (
         <div className="card">
           <h2 style={{ marginBottom: 16 }}>Detailed evaluation</h2>
-          {report.params.map((q) => (
+          {parts.length > 0 && (
+            <div className="table-wrap" style={{ marginBottom: 20 }} tabIndex={0} role="group" aria-label="Score for each part of the call">
+              <table data-testid="parts">
+                <thead><tr><th>Part of the call</th><th className="num">Score</th><th style={{ width: '45%' }}><span className="sr">Share of marks</span></th></tr></thead>
+                <tbody>{parts.map((g) => <tr key={g.name}><td className="strong">{g.name}</td><td className="num">{g.marks} / {g.max}</td><td><Bar value={g.marks} max={g.max} /></td></tr>)}</tbody>
+              </table>
+            </div>
+          )}
+          {report.params.map((q, i) => (
             <div className="param" key={q.key} data-testid="param">
+              {q.group && q.group !== report.params[i - 1]?.group && <p className="small muted strong" style={{ textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>{q.group}</p>}
               <div className="row between"><h3>{q.name}</h3><span className="strong num">{q.marks} / {q.max}</span></div>
               <div style={{ margin: '8px 0 10px' }}><Bar value={q.marks} max={q.max} /></div>
               {q.no_evidence && <div className="note warn small" style={{ marginBottom: 8 }}>No evidence. The AI proposed marks here, but its quote was not found in the transcript, so this scores 0.</div>}
+              {q.criteria?.length > 0 && (
+                <ul className="small" data-testid="criteria" style={{ listStyle: 'none', padding: 0, margin: '0 0 10px' }}>
+                  {q.criteria.map((c) => <li key={c.key} className="row between" style={{ padding: '4px 0', borderBottom: '1px solid var(--line)' }}><span>{c.name}</span><span className="num">{c.marks} / {c.max}</span></li>)}
+                </ul>
+              )}
               <div className="grid g2 small">
                 {q.did_well && <div><b>Did well</b><br />{q.did_well}</div>}
                 {q.did_wrong && <div><b>Went wrong</b><br />{q.did_wrong}</div>}

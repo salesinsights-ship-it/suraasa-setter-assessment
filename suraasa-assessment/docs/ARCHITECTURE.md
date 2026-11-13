@@ -106,7 +106,7 @@ Practice is an assignment whose teacher mode is `practice`. It reuses every part
 - The evaluator is told the caller is an intern in training. The report carries `training` (Ready for live calls, Nearly ready, Needs more practice, Needs coaching) worked out from the same score bands and caps as the hiring recommendation.
 - The intern is sent that training recommendation, their product claims and any proven conduct concern. A hiring candidate is still never sent a recommendation.
 
-The 10 training teachers (`tr01` to `tr10`) and the 8-skill template (`t_training`) live in `server/seed.js` and are copied into the Sheet once by the `installTraining` action.
+The 10 training teachers (`tr01` to `tr10`) and the practice template (`t_training`) live in `server/seed.js` and are copied into the Sheet once by the `installTraining` action.
 
 ### Calls longer than ten minutes
 

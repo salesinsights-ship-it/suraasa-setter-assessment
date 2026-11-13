@@ -63,7 +63,7 @@ function AssignForm({ cand, onClose }) {
           <span className="small muted">{f.practice ? 'The intern calls any teacher below, several times a day, and sees full feedback after each call.' : 'A fixed number of attempts, scored for a hiring recommendation.'}</span>
         </div>
         {f.practice && (!trainingTpl || trainingIds.length < 10) && (
-          <div className="note">The intern training pack (10 training teachers and the 8-skill, 100-mark rubric) has not been fully added to this site yet.
+          <div className="note">The intern training pack (10 training teachers and the Setter Evaluation Rubric) has not been fully added to this site yet.
             {isAdmin ? <div className="mt"><Btn size="sm" onClick={install} busy={busy} data-testid="install-training">Add the training pack</Btn></div> : ' Ask a Super Admin to add it from this screen.'}</div>
         )}
         <div className="grid g2">

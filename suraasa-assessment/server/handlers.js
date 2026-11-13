@@ -3,7 +3,7 @@ import {
 } from './auth.js';
 import { LlmError, DEFAULT_MODELS } from './llm.js';
 import { encode, decode } from './store.js';
-import { SEED_PERSONAS, DEFAULT_TEMPLATE, SEED_KNOWLEDGE, DEFAULT_CONFIG, TRAINING_PERSONAS, TRAINING_TEMPLATE } from './seed.js';
+import { SEED_PERSONAS, DEFAULT_TEMPLATE, SEED_KNOWLEDGE, DEFAULT_CONFIG, TRAINING_PERSONAS, TRAINING_TEMPLATE, SETTER_RUBRIC } from './seed.js';
 import { teacherMessages, teacherLiveSystem, cleanReply, evaluatorMessages, parseJson } from './prompts.js';
 import { LIVE_WS, LIVE_VOICES } from './live.js';
 import { buildReport, reportForCandidate, validateTemplate, RECOMMENDATIONS } from './rubric.js';
@@ -32,6 +32,28 @@ function configOf(rows) {
   const out = { ...DEFAULT_CONFIG };
   for (const r of rows) if (r.id in out) out[r.id] = r.value;
   return out;
+}
+
+/**
+ * Puts the Setter Evaluation Rubric on the two built-in templates, once. Runs the first time a Super Admin opens the site
+ * after the rubric changes. Other settings on those templates are kept, calls already scored keep their old version,
+ * and templates the team made themselves are left alone.
+ */
+function rubricOps(d, user, now) {
+  if (!d.Templates.length || configOf(d.Config).rubric === SETTER_RUBRIC.id) return [];
+  const ops = [];
+  for (const t of d.Templates) {
+    if (t.id !== DEFAULT_TEMPLATE.id && t.id !== TRAINING_TEMPLATE.id) continue;
+    const data = { ...t.data, duration_min: Math.max(Number(t.data.duration_min) || 0, 15), thresholds: SETTER_RUBRIC.thresholds, bands: SETTER_RUBRIC.bands, parameters: SETTER_RUBRIC.parameters };
+    if (JSON.stringify(data) === JSON.stringify(t.data)) continue;
+    ops.push({ op: 'update', tab: 'Templates', id: t.id, patch: { version: t.version + 1, data, updated_at: iso(now), updated_by: user.id } });
+  }
+  const value = SETTER_RUBRIC.id;
+  ops.push(d.Config.some((r) => r.id === 'rubric')
+    ? { op: 'update', tab: 'Config', id: 'rubric', patch: { value, updated_at: iso(now), updated_by: user.id } }
+    : { op: 'append', tab: 'Config', row: { id: 'rubric', value, updated_at: iso(now), updated_by: user.id } });
+  ops.push(audit(user, 'rubric.update', value, `${ops.length - 1} template(s) moved to the Setter Evaluation Rubric`, now));
+  return ops;
 }
 
 function modelsFor(cfg, tier) {
@@ -224,6 +246,7 @@ export async function handle(body, deps) {
     await store.write([
       { op: 'update', tab: 'Users', id: user.id, patch: { last_login: iso(now) } },
       audit(user, 'signin', user.email, '', now),
+      ...(user.role === 'super_admin' ? rubricOps(d, user, now) : []),
     ]);
     const after = await store.read(HOME_TABS, { fresh: true }); // served from this request's own copy, not the Sheet
     const me = after.Users.find((u) => u.id === user.id);
@@ -567,6 +590,7 @@ export async function handle(body, deps) {
       const tabs = ['Candidates', 'Assignments', 'Sessions', 'Personas', 'Templates', 'Knowledge', 'Decisions', 'Config', 'Users'];
       let d = await store.read(tabs, { fresh: true });
       if (isAdmin && (!d.Personas.length || !d.Templates.length || !d.Knowledge.length)) { await seedIfEmpty(); d = await store.read(tabs, { fresh: true }); }
+      if (isAdmin) { const ops = rubricOps(d, user, now); if (ops.length) { await store.write(ops); d = await store.read(tabs, { fresh: true }); } }
       return adminView(d, user, deps);
     }
 
@@ -811,7 +835,11 @@ export async function handle(body, deps) {
         duration_min: Number(t.data?.duration_min), attempts: Number(t.data?.attempts), min_turns: Number(t.data?.min_turns),
         candidate_feedback: t.data?.candidate_feedback, show_previous: t.data?.show_previous !== false,
         thresholds: { strong: Number(t.data?.thresholds?.strong), recommended: Number(t.data?.thresholds?.recommended), borderline: Number(t.data?.thresholds?.borderline) },
-        parameters: (Array.isArray(t.data?.parameters) ? t.data.parameters : []).map((q) => ({ key: s(q.key, 24), name: s(q.name, 60), max: Number(q.max), guide: s(q.guide, 400) })),
+        ...(Array.isArray(t.data?.bands) ? { bands: t.data.bands.slice(0, 4).map((b) => s(b, 60)) } : {}),
+        parameters: (Array.isArray(t.data?.parameters) ? t.data.parameters : []).map((q) => ({
+          key: s(q.key, 24), ...(s(q.group, 40) ? { group: s(q.group, 40) } : {}), name: s(q.name, 60), max: Number(q.max), guide: s(q.guide, 400),
+          ...(Array.isArray(q.criteria) && q.criteria.length ? { criteria: q.criteria.slice(0, 8).map((c) => ({ key: s(c.key, 24), name: s(c.name, 60), max: Number(c.max), levels: s(c.levels, 600) })) } : {}),
+        })),
       };
       const errors = validateTemplate(data);
       if (!name) errors.unshift('Give the template a name.');
