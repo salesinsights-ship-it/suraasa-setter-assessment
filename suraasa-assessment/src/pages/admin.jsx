@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { rpc } from '../api.js';
+import { rpc, takeHome } from '../api.js';
 
 const Ctx = createContext(null);
 export const useAdmin = () => useContext(Ctx);
@@ -10,6 +10,9 @@ export function AdminProvider({ children }) {
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(0);
   const reload = useCallback(async () => {
+    // The change just made (or the sign-in) already brought the updated lists with it: use them, no second request.
+    const given = takeHome('adminHome');
+    if (given) { setData(given); setError(''); return given; }
     setRefreshing((n) => n + 1);
     try { const d = await rpc('adminHome'); setData(d); setError(''); return d; } catch (e) { setError(e.message); return null; } finally { setRefreshing((n) => n - 1); }
   }, []);

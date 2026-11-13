@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { rpc } from '../api.js';
-import { Badge, Btn, Area, Field, Input, Loading, Modal, Recording, Select, STATUS, Tabs, downloadText, fmtDateTime, fmtDur, recTone, useAction } from '../ui.jsx';
+import { Badge, Btn, Area, Field, Input, Loading, Modal, Recording, Select, STATUS, Tabs, downloadText, fmtDateTime, fmtDur, recTone, useAction, useConfirm } from '../ui.jsx';
 import { loadRecording } from '../recording.js';
 import { useAdmin } from './admin.jsx';
 import ReportView, { Transcript } from './ReportView.jsx';
@@ -34,6 +34,7 @@ export default function SessionPage({ id }) {
   const [reason, setReason] = useState('');
   const [modal, setModal] = useState(null);
   const [run, busy] = useAction();
+  const confirm = useConfirm();
   const load = useCallback(() => rpc('getSession', { session_id: id }).then((x) => { setD(x); setDecision((v) => v || x.session.recommendation || ''); }).catch((e) => setError(e.message)), [id]);
   useEffect(() => { load(); }, [load]);
   if (error) return <div className="note bad">{error}</div>;
@@ -47,7 +48,7 @@ export default function SessionPage({ id }) {
   };
   const submitDecision = async () => { if (await run(() => rpc('decide', { session_id: id, decision, reason }), 'Decision recorded')) { setReason(''); refresh(); } };
   const setVoid = async (voided) => {
-    const why = voided ? window.prompt('Why should this attempt not count? (for example: microphone failed)') : '';
+    const why = voided ? await confirm({ title: 'Set this attempt aside?', body: 'It will not count, and the attempt becomes available again.', input: { label: 'Why should it not count? For example: microphone failed', min: 5 }, ok: 'Set aside', danger: true }) : '';
     if (voided && !why) return;
     if (await run(() => rpc('voidSession', { session_id: id, voided, reason: why }), voided ? 'Set aside. The attempt is available again.' : 'Counting again')) refresh();
   };
@@ -69,7 +70,7 @@ export default function SessionPage({ id }) {
           {d.report && <Btn onClick={() => window.print()}>Download report (PDF)</Btn>}
           {d.transcript && <Btn onClick={downloadTranscript}>Download transcript</Btn>}
           {s.status === 'scored' && <Btn onClick={() => setModal('human')}>{s.human ? 'Edit your review' : 'Score it yourself'}</Btn>}
-          {s.status === 'scored' && !s.purged && <Btn busy={busy} onClick={() => window.confirm('Score this call again? The current AI report will be replaced.') && score(true)}>Score again</Btn>}
+          {s.status === 'scored' && !s.purged && <Btn busy={busy} onClick={async () => (await confirm({ title: 'Score this call again?', body: 'The current AI report will be replaced.', ok: 'Score again' })) && score(true)}>Score again</Btn>}
           {s.voided ? <Btn onClick={() => setVoid(false)}>Count this attempt</Btn> : <Btn kind="danger" onClick={() => setVoid(true)}>Set aside</Btn>}
         </div>
       </div>

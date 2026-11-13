@@ -40,6 +40,9 @@ export function makeLive({ apiKey, fetchImpl = fetch, baseUrl = 'https://generat
     return { res, data };
   }
 
+  // The request shape Google accepted last time, per model, so later calls go straight to it instead of trying each in turn.
+  const accepted = new Map();
+
   /** Creates a one-use token locked to this teacher. Tries each model in turn. */
   async function mint({ system, voice, ttlSec, modelIndex = 0 }) {
     const errors = [];
@@ -54,10 +57,12 @@ export function makeLive({ apiKey, fetchImpl = fetch, baseUrl = 'https://generat
         bodies.push(['setup' + (compress ? '' : '-short'), { ...times, bidiGenerateContentSetup: setup }]);
         bodies.push(['constraints' + (compress ? '' : '-short'), { ...times, liveConnectConstraints: { model, config } }]);
       }
+      const known = bodies.findIndex(([f]) => f === accepted.get(models[i]));
+      if (known > 0) bodies.unshift(bodies.splice(known, 1)[0]);
       for (const [form, body] of bodies) {
         // eslint-disable-next-line no-await-in-loop
         const { res, data } = await post(body);
-        if (res.ok && data?.name) return { token: data.name, model: models[i], modelIndex: i, form };
+        if (res.ok && data?.name) { accepted.set(models[i], form); return { token: data.name, model: models[i], modelIndex: i, form }; }
         const msg = data?.error?.message || ('HTTP ' + res.status);
         if (res.status === 401 || res.status === 403) throw new AppError('live_auth', 'Google rejected the Gemini key: ' + msg, 502);
         if (res.status === 429) throw new AppError('live_rate', 'The free Gemini limit was reached. Try again in a minute.', 429);

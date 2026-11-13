@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { rpc } from '../api.js';
-import { Badge, Btn, Area, CodeReveal, Field, Input, Select, Modal, Tabs, Loading, fmtDateTime, useAction } from '../ui.jsx';
+import { Badge, Btn, Area, CodeReveal, Field, Input, Pager, Select, Modal, Tabs, Loading, fmtDateTime, useAction, usePager } from '../ui.jsx';
 import { useAdmin } from './admin.jsx';
 
 const ROLE = { super_admin: 'Super Admin', recruiter: 'Recruiter' };
@@ -23,8 +23,8 @@ function People() {
   return (
     <>
       <div className="row between wrap" style={{ marginBottom: 12 }}><p className="muted">People who can run assessments. Candidates are added on the Candidates page.</p><Btn kind="primary" onClick={() => setForm({ name: '', email: '', role: 'recruiter' })}>Add a recruiter or admin</Btn></div>
-      <div className="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th /></tr></thead>
+      <div className="table-wrap" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens"><table>
+        <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th><span className="sr">Actions</span></th></tr></thead>
         <tbody>{staff.map((u) => (
           <tr key={u.id}><td><b>{u.name}</b><div className="small muted">{u.email}</div></td><td>{ROLE[u.role]}</td><td><Badge tone={u.active ? 'good' : ''}>{u.active ? 'Active' : 'Off'}</Badge></td><td className="small muted">{u.last_login ? fmtDateTime(u.last_login) : 'Never'}</td>
             <td><div className="row gap-s">{u.id !== data.user.id && <Btn size="sm" onClick={() => setForm({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active })}>Edit</Btn>}<Btn size="sm" busy={busy} onClick={() => reset(u)}>Reset code</Btn></div></td></tr>
@@ -98,13 +98,15 @@ function Audit() {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   useEffect(() => { rpc('audit').then((r) => setRows(r.rows)).catch(() => setRows([])); }, []);
+  const shownAll = (rows || []).filter((r) => (r.action + r.actor + r.target + r.detail).toLowerCase().includes(q.toLowerCase()));
+  const pager = usePager(shownAll, 50);
   if (!rows) return <Loading />;
-  const shown = rows.filter((r) => (r.action + r.actor + r.target + r.detail).toLowerCase().includes(q.toLowerCase()));
+  const shown = pager.rows;
   return (
     <>
       <div style={{ maxWidth: 360, marginBottom: 12 }}><Input placeholder="Filter by person, action or candidate ID" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter the audit log" /></div>
-      <div className="table-wrap"><table data-testid="audit"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
-        <tbody>{shown.map((r) => <tr key={r.id}><td className="nowrap small">{fmtDateTime(r.at)}</td><td>{r.actor}</td><td><Badge>{r.action}</Badge></td><td className="small">{r.target}</td><td className="small muted">{r.detail}</td></tr>)}</tbody></table></div>
+      <div className="table-wrap" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens"><table data-testid="audit"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
+        <tbody>{shown.map((r) => <tr key={r.id}><td className="nowrap small">{fmtDateTime(r.at)}</td><td>{r.actor}</td><td><Badge>{r.action}</Badge></td><td className="small">{r.target}</td><td className="small muted">{r.detail}</td></tr>)}</tbody></table><Pager p={pager} noun="entries" /></div>
       <p className="tiny muted mt">The latest 400 entries. The full log is in the AuditLog tab of the Sheet.</p>
     </>
   );

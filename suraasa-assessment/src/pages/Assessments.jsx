@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { rpc } from '../api.js';
-import { Badge, Btn, Area, Empty, Field, Input, Select, Modal, Tabs, fmtDate, useAction } from '../ui.jsx';
+import { Badge, Btn, Area, Empty, Field, Input, Select, Modal, Tabs, fmtDate, useAction, useConfirm } from '../ui.jsx';
 import { useAdmin } from './admin.jsx';
 
 const NEW_TEMPLATE = { name: '', active: true, data: { duration_min: 8, attempts: 1, min_turns: 4, candidate_feedback: 'summary', show_previous: true, thresholds: { strong: 80, recommended: 65, borderline: 50 }, parameters: [] } };
@@ -63,7 +63,8 @@ function Facts() {
   const [run, busy] = useAction();
   const setStatus = async (k, status) => { if (await run(() => rpc('saveKnowledge', { item: { ...k, status } }), status === 'verified' ? 'Verified. The evaluator will use it.' : 'Updated')) reload(); };
   const save = async (e) => { e.preventDefault(); if (await run(() => rpc('saveKnowledge', { item: edit }), 'Saved')) { reload(); setEdit(null); } };
-  const remove = async (k) => { if (window.confirm('Delete this fact?') && await run(() => rpc('saveKnowledge', { item: k, remove: true }), 'Deleted')) reload(); };
+  const confirm = useConfirm();
+  const remove = async (k) => { if (await confirm({ title: 'Delete this fact?', body: k.fact, ok: 'Delete', danger: true }) && await run(() => rpc('saveKnowledge', { item: k, remove: true }), 'Deleted')) reload(); };
   const order = { unverified: 0, verified: 1, rejected: 2 };
   const rows = [...data.knowledge].sort((a, b) => order[a.status] - order[b.status]);
   const verified = rows.filter((k) => k.status === 'verified').length;
@@ -73,9 +74,9 @@ function Facts() {
         These are the only Suraasa facts the evaluator may use to judge whether a candidate's claims are accurate. <b>{verified} verified</b>, {rows.filter((k) => k.status === 'unverified').length} waiting. Unverified drafts were taken from Suraasa's public website and are ignored until someone who knows the programme approves them. Add fees or other details only if setters are expected to state them.
       </div>
       <div className="row" style={{ marginBottom: 12 }}><Btn kind="primary" onClick={() => setEdit({ topic: '', fact: '', source: '', status: 'verified' })}>Add a fact</Btn></div>
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         <table data-testid="facts">
-          <thead><tr><th>Topic</th><th>Fact</th><th>Status</th><th>Updated</th><th /></tr></thead>
+          <thead><tr><th>Topic</th><th>Fact</th><th>Status</th><th>Updated</th><th><span className="sr">Actions</span></th></tr></thead>
           <tbody>{rows.map((k) => (
             <tr key={k.id}>
               <td className="strong nowrap">{k.topic}</td>
@@ -129,10 +130,10 @@ function Calibration() {
       </div>
       {meanGap > 10 && <div className="note warn mt">The AI and your reviewers differ by more than 10 marks on average. Tighten the wording of the parameters where the gap is largest, or rely more on human review until it narrows.</div>}
       <h2 className="mt-l">By skill</h2>
-      <div className="table-wrap mt"><table><thead><tr><th>Skill</th><th>Reviews</th><th>Average gap</th><th>Direction</th></tr></thead>
+      <div className="table-wrap mt" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens"><table><thead><tr><th>Skill</th><th>Reviews</th><th>Average gap</th><th>Direction</th></tr></thead>
         <tbody>{Object.values(diffs).sort((a, b) => b.abs / b.n - a.abs / a.n).map((x) => { const g = (x.abs / x.n) * x.max; const b = (x.bias / x.n) * x.max; return <tr key={x.name}><td className="strong">{x.name}</td><td className="num">{x.n}</td><td className="num">{g.toFixed(1)} of {x.max}</td><td>{Math.abs(b) < 0.25 ? 'Even' : b > 0 ? `AI higher by ${b.toFixed(1)}` : `AI lower by ${Math.abs(b).toFixed(1)}`}</td></tr>; })}</tbody></table></div>
       <h2 className="mt-l">Reviewed calls</h2>
-      <div className="table-wrap mt"><table><thead><tr><th>Candidate</th><th>AI</th><th>Human</th><th>Gap</th><th>Reviewer</th></tr></thead>
+      <div className="table-wrap mt" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens"><table><thead><tr><th>Candidate</th><th>AI</th><th>Human</th><th>Gap</th><th>Reviewer</th></tr></thead>
         <tbody>{reviewed.map((s) => <tr key={s.id} className="click" onClick={() => { window.location.hash = '#/session/' + s.id; }}><td className="strong">{cands[s.candidate_id]?.name}</td><td className="num">{s.total}</td><td className="num">{s.human.total}</td><td className="num">{(s.total - s.human.total > 0 ? '+' : '') + (s.total - s.human.total)}</td><td>{s.human.by_name}</td></tr>)}</tbody></table></div>
     </>
   );
@@ -151,7 +152,7 @@ export default function Assessments() {
         <div className="grid g2">
           {data.templates.map((t) => (
             <button key={t.id} type="button" className="card" style={{ textAlign: 'left', cursor: 'pointer', opacity: t.active ? 1 : 0.55 }} onClick={() => setEdit(t)} data-testid="template-card">
-              <div className="row between"><h3>{t.name}</h3><Badge>Version {t.version}</Badge></div>
+              <div className="row between"><h2 className="h3">{t.name}</h2><Badge>Version {t.version}</Badge></div>
               <p className="small muted mt" style={{ marginTop: 6 }}>{t.data.parameters.length} parameters · {t.data.duration_min} min · {t.data.attempts} attempt{t.data.attempts === 1 ? '' : 's'} · pass mark {t.data.thresholds.recommended}</p>
               <div className="row wrap gap-s mt">{t.data.parameters.map((p) => <Badge key={p.key}>{p.name} {p.max}</Badge>)}</div>
               {!canEdit && <p className="tiny muted mt">Only a Super Admin can change evaluation criteria.</p>}

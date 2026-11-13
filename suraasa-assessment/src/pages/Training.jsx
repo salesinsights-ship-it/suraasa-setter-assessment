@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Badge, Bar, Btn, Empty, Input, csvCell, downloadText, fmtDate, go, recTone } from '../ui.jsx';
+import { Badge, Bar, Btn, Empty, Input, Pager, Spark, TrendChart, csvCell, downloadText, fmtDate, go, recTone, usePager } from '../ui.jsx';
 import { useAdmin, isPractice } from './admin.jsx';
 
 const REC_ORDER = { 'Ready for live calls': 0, 'Nearly ready': 1, 'Needs more practice': 2, 'Needs coaching': 3 };
@@ -51,11 +51,16 @@ export default function Training() {
         ready: mine.length >= 2 && mine.slice(-2).every((s) => s.recommendation === 'Ready for live calls'),
       };
     });
-    return { interns, scored, calls, teamSkills: skills(scored).sort((a, b) => a.pct - b.pct), weekAgo };
+    // Team average for each day that had scored practice calls, oldest first, for the trend chart.
+    const byDay = new Map();
+    for (const s of scored) { const d = istDay(s.started_at); const e = byDay.get(d) || { sum: 0, n: 0 }; e.sum += s.total; e.n++; byDay.set(d, e); }
+    const trend = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(-30).map(([d, e]) => ({ label: new Date(d + 'T00:00:00Z').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' }), value: round(e.sum / e.n), note: `${e.n} call${e.n === 1 ? '' : 's'}` }));
+    return { interns, scored, calls, teamSkills: skills(scored).sort((a, b) => a.pct - b.pct), weekAgo, trend };
   }, [data, cands, templates]);
 
   const val = (x) => ({ name: x.c.name.toLowerCase(), calls: x.calls, avg: x.avg ?? -1, best: x.best ?? -1, last: x.last?.total ?? -1, change: x.change ?? -999, weakest: x.weakest?.pct ?? 999, rec: -(REC_ORDER[x.last?.recommendation] ?? 9), date: x.last?.started_at || '' }[sort[0]]);
   const rows = model.interns.filter((x) => (x.c.name + x.c.email + x.c.code).toLowerCase().includes(q.toLowerCase())).sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * sort[1]);
+  const pager = usePager(rows, 25);
   const head = (key, label) => <th key={key} className="sort" onClick={() => setSort([key, sort[0] === key ? -sort[1] : key === 'name' ? 1 : -1])} aria-sort={sort[0] === key ? (sort[1] > 0 ? 'ascending' : 'descending') : 'none'}>{label}{sort[0] === key ? (sort[1] > 0 ? ' ↑' : ' ↓') : ''}</th>;
 
   const withCalls = model.interns.filter((x) => x.calls);
@@ -84,7 +89,7 @@ export default function Training() {
     <>
       <div className="head"><div><h1>Intern training</h1><p className="muted">Practice calls with the AI teachers. Hiring assessments are on the Dashboard and Leaderboard.</p></div><Btn onClick={exportCsv}>Download CSV</Btn></div>
 
-      <div className="grid g4 keep2" data-testid="training-stats">
+      <div className="grid kpis" data-testid="training-stats">
         {stats.map(([label, value, sub]) => <div className="card stat" key={label}><b className="num">{value}</b><span>{label}</span>{sub && <div className="small muted">{sub}</div>}</div>)}
       </div>
 
@@ -109,17 +114,23 @@ export default function Training() {
         </div>
       </div>
 
+      <div className="card mt-l">
+        <h2>Team average score by day</h2>
+        <p className="small muted" style={{ marginBottom: 8 }}>Average of all scored practice calls on each day, out of 100. Hover a point for the number of calls.</p>
+        <TrendChart points={model.trend} />
+      </div>
+
       <div className="row between wrap mt-l" style={{ marginBottom: 12 }}><h2>Interns</h2><div style={{ flex: '0 1 300px' }}><Input placeholder="Search name, email or ID" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search interns" /></div></div>
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         <table data-testid="training-table">
           <thead><tr>{[['name', 'Intern'], ['calls', 'Scored calls'], ['avg', 'Average'], ['best', 'Best'], ['last', 'Latest'], ['change', 'Change'], ['weakest', 'Weakest skill'], ['rec', 'Latest recommendation'], ['date', 'Last call']].map(([k, l]) => head(k, l))}</tr></thead>
-          <tbody>{rows.map((x) => (
+          <tbody>{pager.rows.map((x) => (
             <tr key={x.c.id} className="click" onClick={() => go(x.last ? '/session/' + x.last.id : '/candidates/' + x.c.id)}>
               <td><b>{x.c.name}</b> {x.ready && <Badge tone="good">Ready</Badge>}<div className="small muted">{x.c.code} · {x.teachers} of the teachers tried</div></td>
               <td className="num">{x.calls}<div className="small muted">{x.week} this week</div></td>
               <td className="num strong" style={{ fontSize: 17 }}>{x.avg ?? '–'}</td>
               <td className="num">{x.best ?? '–'}</td>
-              <td className="num">{x.last?.total ?? '–'}{x.trend.length > 1 && <div className="tiny muted">{x.trend.join(' · ')}</div>}</td>
+              <td className="num">{x.last?.total ?? '–'}<Spark values={x.trend} /></td>
               <td className="num" style={{ color: x.change > 0 ? 'var(--good)' : x.change < 0 ? 'var(--bad, #c0392b)' : undefined }}>{x.change === null ? '–' : (x.change > 0 ? '+' : '') + x.change}</td>
               <td>{x.weakest ? <>{x.weakest.name}<div className="small muted">{x.weakest.pct}% of marks</div></> : '–'}</td>
               <td>{x.last ? <Badge tone={recTone(x.last.recommendation)}>{x.last.recommendation}</Badge> : <span className="muted">No scored call yet</span>}</td>
@@ -127,6 +138,7 @@ export default function Training() {
             </tr>
           ))}</tbody>
         </table>
+        <Pager p={pager} noun="interns" />
       </div>
       <p className="small muted mt">Change compares the average of the last three scored calls with the three before them. "Ready" needs the top band on the last two scored calls. Click a row to open the intern's latest report.</p>
     </>

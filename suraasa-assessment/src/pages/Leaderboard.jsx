@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Badge, Btn, Empty, Field, Input, Select, csvCell, downloadText, fmtDate, go, recTone } from '../ui.jsx';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Badge, Btn, Empty, Field, Input, Pager, Select, csvCell, downloadText, fmtDate, go, recTone, usePager } from '../ui.jsx';
 import { useAdmin, latestScored, latestDecision } from './admin.jsx';
 
 const COLS = [
@@ -24,6 +24,9 @@ export default function Leaderboard() {
     return list.sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * sort[1]);
   }, [data, sort, from, to, role]);
 
+  const pager = usePager(rows, 25);
+  const { setPage } = pager;
+  useEffect(() => { setPage(0); }, [sort, from, to, role, setPage]);
   const head = (key, label) => <th key={key} className="sort" onClick={() => setSort([key, sort[0] === key ? -sort[1] : key === 'name' ? 1 : -1])} aria-sort={sort[0] === key ? (sort[1] > 0 ? 'ascending' : 'descending') : 'none'}>{label}{sort[0] === key ? (sort[1] > 0 ? ' ↑' : ' ↓') : ''}</th>;
   const toggle = (id) => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : picked.length < 4 ? [...picked, id] : picked);
   const exportCsv = () => {
@@ -44,11 +47,11 @@ export default function Leaderboard() {
         <Field label="Role"><Select value={role} onChange={(e) => setRole(e.target.value)} options={[['', 'All roles'], ...roles.map((r) => [r, r])]} /></Field>
         {(from || to || role) && <Btn kind="ghost" onClick={() => { setFrom(''); setTo(''); setRole(''); }}>Clear filters</Btn>}
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         {!rows.length ? <Empty title="No scored calls match">Scores appear here once a candidate completes a call.</Empty> : (
           <table data-testid="leaderboard">
-            <thead><tr><th aria-label="Select to compare" /><th>#</th>{COLS.map(([k, l]) => head(k, l))}<th>Recruiter decision</th></tr></thead>
-            <tbody>{rows.map((x, i) => (
+            <thead><tr><th><span className="sr">Select to compare</span></th><th>#</th>{COLS.map(([k, l]) => head(k, l))}<th>Recruiter decision</th></tr></thead>
+            <tbody>{pager.rows.map((x, j) => { const i = pager.page * pager.size + j; return (
               <tr key={x.c.id} className="click" onClick={() => go('/session/' + x.s.id)}>
                 <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={picked.includes(x.c.id)} onChange={() => toggle(x.c.id)} aria-label={'Compare ' + x.c.name} /></td>
                 <td className="num muted">{i + 1}</td>
@@ -59,9 +62,10 @@ export default function Leaderboard() {
                 <td className="nowrap">{fmtDate(x.s.started_at)}</td>
                 <td>{x.d ? <Badge tone={recTone(x.d.decision)}>{x.d.decision}</Badge> : <span className="muted">–</span>}</td>
               </tr>
-            ))}</tbody>
+            ); })}</tbody>
           </table>
         )}
+        <Pager p={pager} noun="candidates" />
       </div>
       <p className="small muted mt">Tick two to four candidates to compare them side by side. Communication, objection handling and closing are out of 10, 15 and 5 in the standard template.</p>
     </>

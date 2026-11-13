@@ -18,6 +18,23 @@ if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 /** Replaces the browser's speech engine so the test can "speak" and "hear" on cue. */
 const FAKE_SPEECH = () => {
   window.__spoken = []; window.__rec = null; window.__recStarts = 0;
+  // Confirmation dialogs: type a reason where one is asked for, then press the confirm button, as a person would.
+  window.__confirms = 0;
+  const watchConfirms = () => new MutationObserver(() => {
+    const ok = document.querySelector('[data-testid=confirm-ok]');
+    if (!ok || ok.dataset.done) return;
+    const input = document.querySelector('[data-testid=confirm-input]');
+    if (input && !input.value) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Microphone failed during the test');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return; // the button enables on the next render
+    }
+    if (ok.disabled) return;
+    ok.dataset.done = '1'; window.__confirms++;
+    setTimeout(() => ok.click(), 0);
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'value'] });
+  // This script runs before the page exists, so the watcher starts once there is a document to watch.
+  if (document.documentElement) watchConfirms(); else document.addEventListener('DOMContentLoaded', watchConfirms);
   class FakeRec {
     start() { window.__rec = this; window.__recStarts++; }
     abort() { if (window.__rec === this) window.__rec = null; setTimeout(() => this.onend?.(), 0); }

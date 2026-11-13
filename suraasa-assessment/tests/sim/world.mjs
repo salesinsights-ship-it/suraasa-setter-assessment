@@ -15,7 +15,10 @@ export function makeWorld({ admin = { name: 'Asha Admin', email: 'admin@suraasa.
   const adminCode = gas.ui.alerts[gas.ui.alerts.length - 1].match(/Access code: (\S+)/)[1];
   const groq = makeFakeGroq();
   const clock = { t: Date.parse('2026-11-11T10:00:00Z') };
-  const store = makeStore({ url: 'sim://sheet', secret: gas.secret(), fetchImpl: gas.fetchImpl, ttlMs: 0 });
+  // SHEET_DELAY_MS makes every request to the stand-in Sheet take that long, to measure how the site feels at Google's real speed.
+  const delay = Number(process.env.SHEET_DELAY_MS) || 0;
+  const sheetFetch = delay ? async (...a) => { await new Promise((r) => setTimeout(r, delay)); return gas.fetchImpl(...a); } : gas.fetchImpl;
+  const store = makeStore({ url: 'sim://sheet', secret: gas.secret(), fetchImpl: sheetFetch, ttlMs: delay ? 15000 : 0 });
   const llm = makeGroq({ apiKey: 'test-key', fetchImpl: groq.fetchImpl, wait: async () => {} });
   const gemini = makeFakeGemini();
   const liveClient = makeLive({ apiKey: 'test-gemini-key', fetchImpl: gemini.fetchImpl });

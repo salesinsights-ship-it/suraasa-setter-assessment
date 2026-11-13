@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { rpc, rpcRetry } from '../api.js';
-import { Avatar, Btn, Icon, Loading, fmtDur, go } from '../ui.jsx';
+import { Avatar, Btn, Icon, Loading, fmtDur, go, useConfirm } from '../ui.jsx';
 import { createVoice, voiceSupported, isPhone, ring } from '../voice.js';
 import { createLive, liveSupported } from '../live.js';
 import { uploadRecording } from '../recording.js';
@@ -32,6 +32,7 @@ export default function Call({ assignmentId, personaId }) {
   const [notice, setNotice] = useState('');
   const [typed, setTyped] = useState('');
   const [doneInfo, setDoneInfo] = useState(null);
+  const confirm = useConfirm();
   const [starting, setStarting] = useState(false);
   const tabs = useRef(null);
   const tabId = useRef(Math.random().toString(36).slice(2));
@@ -252,9 +253,9 @@ export default function Call({ assignmentId, personaId }) {
     const l = lang === 'en-IN' ? 'hi-IN' : 'en-IN'; setLang(l); ref.current.voice?.setLang(l);
     if (ref.current.call) persist({ ...ref.current.call, lang: l });
   }
-  function endByUser() {
+  async function endByUser() {
     const turns = (ref.current.call?.items || []).filter((x) => x.r === 'c').length;
-    if (turns < (call?.min_turns || 4) && !window.confirm('This call is too short to be assessed. If you end it now it will not be scored. End the call?')) return;
+    if (turns < (call?.min_turns || 4) && !(await confirm({ title: 'End this call now?', body: 'It is too short to be assessed, so it will not be scored and will not use an attempt.', ok: 'End the call', cancel: 'Keep talking', danger: true }))) return;
     finish('candidate');
   }
 
@@ -278,11 +279,11 @@ export default function Call({ assignmentId, personaId }) {
             <div className="mt"><Btn kind="primary" busy={starting} onClick={() => begin(resume)}>Resume the call</Btn></div></div>
         )}
         <div className="card mt col">
-          <div className="row between wrap"><div><h3>1. Browser</h3><p className="small muted">{supported ? 'This browser supports voice calls.' : 'This browser cannot do voice calls. Use Chrome or Edge.'}</p></div><span className={'badge ' + (supported ? 'good' : 'bad')}>{supported ? 'Ready' : 'Not supported'}</span></div>
+          <div className="row between wrap"><div><h2 className="h3">1. Browser</h2><p className="small muted">{supported ? 'This browser supports voice calls.' : 'This browser cannot do voice calls. Use Chrome or Edge.'}</p></div><span className={'badge ' + (supported ? 'good' : 'bad')}>{supported ? 'Ready' : 'Not supported'}</span></div>
           {isPhone() && <div className="note warn small">Phones are less reliable for voice calls. A computer with Chrome or Edge works best.</div>}
-          <div className="row between wrap"><div><h3>2. Microphone</h3><p className="small muted">{mic === 'ok' ? 'Microphone is allowed.' : mic === 'blocked' ? 'Blocked. Click the lock icon in the address bar, allow the microphone, then check again.' : mic === 'none' ? 'No microphone found. Connect one and check again.' : 'Allow the microphone when your browser asks.'}</p></div>
+          <div className="row between wrap"><div><h2 className="h3">2. Microphone</h2><p className="small muted">{mic === 'ok' ? 'Microphone is allowed.' : mic === 'blocked' ? 'Blocked. Click the lock icon in the address bar, allow the microphone, then check again.' : mic === 'none' ? 'No microphone found. Connect one and check again.' : 'Allow the microphone when your browser asks.'}</p></div>
             {mic === 'ok' ? <span className="badge good">Ready</span> : <Btn size="sm" onClick={checkMic}>Check microphone</Btn>}</div>
-          <div style={{ display: info.live ? 'none' : undefined }}><h3>3. How you will speak</h3>
+          <div style={{ display: info.live ? 'none' : undefined }}><h2 className="h3">3. How you will speak</h2>
             <div className="row mt wrap gap-s">
               {[['en-IN', 'Mostly English'], ['hi-IN', 'Mostly Hindi']].map(([v, t]) => <button key={v} type="button" className={'btn sm ' + (lang === v ? 'primary' : '')} onClick={() => setLang(v)}>{t}</button>)}
             </div>
@@ -290,7 +291,7 @@ export default function Call({ assignmentId, personaId }) {
           <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={headset} onChange={(e) => setHeadset(e.target.checked)} style={{ marginTop: 4 }} /><span><b>I am wearing a headset or earphones.</b><br /><span className="small muted">{info.live ? 'Strongly recommended. With a headset you can talk over the teacher, as on a real call. Without one, your microphone is paused while the teacher is speaking so the teacher does not hear their own voice, so wait for them to finish.' : 'Lets you speak while the teacher is speaking. Without one, wait for "Your turn" so the teacher\'s voice is not picked up by your microphone.'}</span></span></label>
         </div>
         <div className="card mt col">
-          <h3>What to expect</h3>
+          <h2 className="h3">What to expect</h2>
           <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
             <li>You are calling a teacher who is played by AI. Treat it as a real call.</li>
             <li>The teacher answers first. Then introduce yourself and take the call forward.</li>

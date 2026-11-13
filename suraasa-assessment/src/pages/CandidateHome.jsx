@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { rpc } from '../api.js';
+import { rpc, takeHome } from '../api.js';
 import { Avatar, Badge, Btn, Empty, Loading, STATUS, fmtDateTime, fmtDur, go } from '../ui.jsx';
 import { voiceSupported } from '../voice.js';
 
@@ -7,7 +7,7 @@ export default function CandidateHome({ user }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [pick, setPick] = useState({});
-  useEffect(() => { rpc('myHome').then(setData).catch((e) => setError(e.message)); }, []);
+  useEffect(() => { const given = takeHome('myHome'); if (given) setData(given); else rpc('myHome').then(setData).catch((e) => setError(e.message)); }, []);
   if (error) return <div className="page"><div className="note bad">{error}</div></div>;
   if (!data) return <Loading />;
   const open = data.assignments.filter((a) => a.status === 'open');

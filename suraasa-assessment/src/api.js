@@ -8,16 +8,32 @@ export function setSession(v) {
   else sessionStorage.removeItem(KEY);
 }
 
+// Lists the server sent along with another reply (with sign-in, or with a change), kept for a few seconds so the
+// page that needs them next can use them instead of asking the server again.
+const handed = {};
+const CHANGES_HOME = ['saveCandidate', 'setCandidateStatus', 'deleteCandidate', 'saveAssignment', 'cancelAssignment', 'decide', 'humanReview', 'voidSession',
+  'savePersona', 'saveTemplate', 'saveKnowledge', 'saveUser', 'saveConfig', 'installTraining', 'score'];
+/** Returns lists handed over in the last few seconds ('adminHome' or 'myHome'), once, or null. */
+export function takeHome(kind) {
+  const h = handed[kind];
+  delete handed[kind];
+  return h && Date.now() - h.at < 8000 ? h.data : null;
+}
+
 export class ApiError extends Error {
   constructor(message, code, status, data) { super(message); this.code = code; this.status = status; this.data = data; }
 }
 
 /** One call to the server. Network failures become code "offline" so callers can retry. */
 export async function rpc(action, payload = {}) {
-  const token = getSession()?.token;
+  const session = getSession();
+  const token = session?.token;
+  const staff = session && session.user?.role !== 'candidate';
+  const body = { action, token, ...payload, ...(staff && CHANGES_HOME.includes(action) ? { with_home: true } : {}) };
   let res;
   try {
-    res = await fetch('/api/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, token, ...payload }) });
+    // A request that has not answered in 75 seconds is not going to: say so instead of spinning for ever.
+    res = await fetch('/api/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(75000) : undefined });
   } catch {
     throw new ApiError('You seem to be offline. Check your connection and try again.', 'offline', 0);
   }
@@ -27,6 +43,11 @@ export async function rpc(action, payload = {}) {
   if (!data.ok) {
     if (data.code === 'signed_out' && action !== 'signIn') { setSession(null); window.location.hash = '#/'; window.location.reload(); }
     throw new ApiError(data.error || 'Something went wrong.', data.code, res.status, data);
+  }
+  if (data.home) {
+    const kind = action === 'signIn' ? (data.user?.role === 'candidate' ? 'myHome' : 'adminHome') : 'adminHome';
+    handed[kind] = { data: data.home, at: Date.now() };
+    delete data.home;
   }
   return data;
 }

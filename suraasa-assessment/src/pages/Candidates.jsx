@@ -1,6 +1,6 @@
 import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { rpc } from '../api.js';
-import { Badge, Bar, Btn, CodeReveal, Empty, Field, Input, Area, Pager, Select, Modal, STATUS, LEVEL_NAMES, fmtDate, fmtDateTime, fmtDur, go, recTone, useAction, usePager } from '../ui.jsx';
+import { Badge, Bar, Btn, CodeReveal, Empty, Field, Input, Area, Pager, Select, Modal, STATUS, LEVEL_NAMES, fmtDate, fmtDateTime, fmtDur, go, recTone, useAction, useConfirm, usePager } from '../ui.jsx';
 import { useAdmin, latestScored, latestDecision } from './admin.jsx';
 
 function CandidateForm({ cand, onClose, onCode }) {
@@ -114,7 +114,7 @@ export default function Candidates() {
         <div style={{ flex: '1 1 240px', maxWidth: 360 }}><Input placeholder="Search name, email or ID" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search candidates" /></div>
         <div className="row gap-s">{[['active', 'Active'], ['archived', 'Archived']].map(([v, t]) => <button key={v} className={'btn sm ' + (show === v ? 'primary' : '')} onClick={() => setShow(v)}>{t}</button>)}</div>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         {!rows.length ? <Empty title={q ? 'No match' : 'No candidates here yet'}>{q ? 'Try a different search.' : 'Add a candidate to create their sign-in and assign a mock call.'}</Empty> : (
           <table>
             <thead><tr><th>ID</th><th>Candidate</th><th className="hide-l">Role</th><th className="hide-l">Recruiter</th><th>Calls</th><th>Latest score</th><th>AI recommendation</th><th>Your decision</th></tr></thead>
@@ -144,6 +144,7 @@ export function CandidateDetail({ id }) {
   const [modal, setModal] = useState(null);
   const [code, setCode] = useState(null);
   const [run, busy] = useAction();
+  const confirm = useConfirm();
   const c = cands[id];
   if (!c) return <Empty title="Candidate not found"><a href="#/candidates">Back to candidates</a></Empty>;
   const assignments = data.assignments.filter((a) => a.candidate_id === id).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
@@ -152,10 +153,10 @@ export function CandidateDetail({ id }) {
 
   const reset = async () => { const r = await run(() => rpc('resetCode', { user_id: c.user_id })); if (r) setCode({ name: c.name, email: c.email, code: r.access_code }); };
   const setStatus = async (status) => { if (await run(() => rpc('setCandidateStatus', { id, status }), status === 'archived' ? 'Archived. They can no longer sign in.' : 'Restored')) reload(); };
-  const cancel = async (aid) => { if (window.confirm('Cancel this assignment? The candidate will no longer be able to take it.') && await run(() => rpc('cancelAssignment', { id: aid }), 'Assignment cancelled')) reload(); };
+  const cancel = async (aid) => { if (await confirm({ title: 'Cancel this assignment?', body: 'The candidate will no longer be able to take it.', ok: 'Cancel the assignment', cancel: 'Keep it', danger: true }) && await run(() => rpc('cancelAssignment', { id: aid }), 'Assignment cancelled')) reload(); };
   const remove = async () => {
-    const reason = window.prompt(`Delete ${c.name} permanently?\n\nThis removes their sign-in, calls, transcripts, reports and decisions. It cannot be undone.\n\nType a reason to confirm:`);
-    if (!reason || reason.trim().length < 3) return;
+    const reason = await confirm({ title: `Delete ${c.name} permanently?`, body: 'This removes their sign-in, calls, transcripts, recordings, reports and decisions. It cannot be undone.', input: { label: 'Reason, kept in the audit log', min: 3 }, ok: 'Delete permanently', danger: true });
+    if (!reason) return;
     if (await run(() => rpc('deleteCandidate', { id, reason }), 'Candidate deleted')) { reload(); go('/candidates'); }
   };
 
@@ -182,9 +183,9 @@ export function CandidateDetail({ id }) {
       </div>
 
       <h2 className="mt-l">Assigned mock calls</h2>
-      <div className="table-wrap mt">
+      <div className="table-wrap mt" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         {!assignments.length ? <Empty title="Nothing assigned">Assign a mock call so this candidate has something to take when they sign in.</Empty> : (
-          <table><thead><tr><th>Assigned</th><th className="hide-l">Template</th><th>Teacher</th><th>Level</th><th className="hide-l">Length</th><th>Attempts</th><th>Due</th><th>Status</th><th /></tr></thead>
+          <table><thead><tr><th>Assigned</th><th className="hide-l">Template</th><th>Teacher</th><th>Level</th><th className="hide-l">Length</th><th>Attempts</th><th>Due</th><th>Status</th><th><span className="sr">Actions</span></th></tr></thead>
             <tbody>{assignments.map((a) => (
               <tr key={a.id}><td className="nowrap">{fmtDate(a.created_at)}</td><td className="hide-l">{templates[a.template_id]?.name}</td>
                 <td>{a.persona_mode === 'practice' ? `Practice, ${(a.persona_ids || []).length} teachers` : a.persona_mode === 'random' ? `Random${a.persona_ids?.length ? ` of ${a.persona_ids.length}` : ''}` : (a.persona_ids || []).map((p) => personas[p]?.name).join(', ')}</td>
@@ -196,7 +197,7 @@ export function CandidateDetail({ id }) {
       </div>
 
       <h2 className="mt-l">Call history</h2>
-      <div className="table-wrap mt">
+      <div className="table-wrap mt" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         {!sessions.length ? <Empty title="No calls yet">Calls appear here as soon as the candidate starts one.</Empty> : (
           <table><thead><tr><th>When</th><th>Teacher</th><th>Length</th><th>Status</th><th>Score</th><th>AI recommendation</th></tr></thead>
             <tbody>{sessions.map((s) => (
@@ -224,7 +225,7 @@ export function Compare({ ids }) {
       <p className="no-print"><a href="#/leaderboard">Back to the leaderboard</a></p>
       <div className="head mt"><div><h1>Compare candidates</h1><p className="muted">Each candidate's latest scored call</p></div><Btn onClick={() => window.print()}>Download as PDF</Btn></div>
       {new Set(cols.map((x) => x.s.template_id + ':' + x.s.template_version)).size > 1 && <div className="note warn" style={{ marginBottom: 16 }}>These calls were scored with different templates or versions, so compare with care.</div>}
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         <table>
           <thead><tr><th>Skill</th>{cols.map(({ c }) => <th key={c.id}>{c.name}</th>)}</tr></thead>
           <tbody>

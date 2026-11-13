@@ -783,3 +783,67 @@ test('Speed: each page needs one request to the Google Sheet, and replies during
   assert.equal(n['Each reply during a call (average)'], 0);
   assert.ok(n['Start a call'] <= 2 && n['End a call'] <= 2 && n['Score a call'] <= 3, JSON.stringify(n));
 });
+
+/** Treats an empty cell, null and a missing field as the same thing, as the pages do. */
+const tidy = (v) => JSON.parse(JSON.stringify(v, (k, x) => (x === '' || x === null ? undefined : x)));
+
+test('Speed: signing in brings the first page with it, for staff and for candidates', async () => {
+  const { w, admin, recruiter, candidate } = await ready();
+  const adminIn = await w.rpc('signIn', { email: w.admin.email, code: w.admin.code });
+  const fresh = await w.rpc('adminHome', {}, adminIn.token);
+  assert.deepEqual(tidy(adminIn.home), tidy(fresh));
+  assert.ok(adminIn.home.users.length >= 3 && adminIn.home.config.default_models);
+  const rec = await w.rpc('saveUser', { name: 'Rita Recruiter', email: 'rita@suraasa.com', role: 'recruiter' }, admin);
+  const recIn = await w.rpc('signIn', { email: 'rita@suraasa.com', code: rec.access_code });
+  assert.deepEqual(recIn.home.candidates, [], 'a recruiter is sent only their own candidates');
+  assert.ok(!('default_models' in recIn.home.config));
+  const home = await w.rpc('myHome', {}, candidate);
+  const c = await w.rpc('adminHome', {}, recruiter);
+  const code = (await w.rpc('resetCode', { user_id: c.candidates[0].user_id }, recruiter)).access_code;
+  const candIn = await w.rpc('signIn', { email: 'rohan@example.com', code });
+  assert.deepEqual(tidy(candIn.home), tidy(home));
+  assert.ok(!JSON.stringify(candIn.home).includes('class in a few minutes'), 'hidden teacher instructions never travel with sign-in');
+  // a brand new site still sets itself up on the first admin visit
+  const blank = makeWorld();
+  assert.equal((await blank.rpc('signIn', { email: blank.admin.email, code: blank.admin.code })).home, null);
+});
+
+test('Speed: a change replies with the updated lists, identical to asking the Sheet again', async () => {
+  const { w, admin, recruiter, candidate, candidateId, assignmentId } = await ready();
+  const same = async (label, reply, token) => { assert.ok(reply.ok && reply.home, label + ': ' + (reply.error || 'no lists in the reply')); assert.deepEqual(tidy(reply.home), tidy(await w.rpc('adminHome', {}, token)), label); };
+  const added = await w.rpc('saveCandidate', { name: 'Simran Kaur', email: 'simran@example.com', phone: '+919812345678', with_home: true }, recruiter);
+  await same('add a candidate', added, recruiter);
+  await same('edit a candidate', await w.rpc('saveCandidate', { id: added.id, name: 'Simran K', email: 'simran@example.com', notes: '=SUM(1)', with_home: true }, recruiter), recruiter);
+  const as = await w.rpc('saveAssignment', { candidate_id: added.id, template_id: 't_default', persona_mode: 'choice', persona_ids: ['p01', 'p02'], attempts: 2, with_home: true }, recruiter);
+  await same('assign a call', as, recruiter);
+  await same('cancel an assignment', await w.rpc('cancelAssignment', { id: as.id, with_home: true }, recruiter), recruiter);
+  await same('archive', await w.rpc('setCandidateStatus', { id: added.id, status: 'archived', with_home: true }, recruiter), recruiter);
+  const { session_id } = await playCall(w, candidate, assignmentId, GOOD_LINES);
+  await same('score a call', await w.rpc('score', { session_id, with_home: true }, recruiter), recruiter);
+  await same('set a call aside', await w.rpc('voidSession', { session_id, reason: 'microphone failed', with_home: true }, recruiter), recruiter);
+  await same('record a decision', await w.rpc('decide', { session_id, decision: 'Recommended', reason: '', with_home: true }, recruiter), recruiter);
+  await same('verify a fact', await w.rpc('saveKnowledge', { item: { id: 'k01', topic: 'Name', fact: 'PgCTL is a teacher training programme.', source: 'x', status: 'verified' }, with_home: true }, admin), admin);
+  await same('change settings', await w.rpc('saveConfig', { config: { review_every: 3, retention_days: 90 }, with_home: true }, admin), admin);
+  await same('add the training pack', await w.rpc('installTraining', { with_home: true }, admin), admin);
+  await same('delete a candidate', await w.rpc('deleteCandidate', { id: added.id, reason: 'duplicate', with_home: true }, admin), admin);
+  // a candidate can never be sent the recruiter's lists, whatever they ask for
+  const sneaky = await w.rpc('score', { session_id, with_home: true }, candidate);
+  assert.ok(!('home' in sneaky));
+  assert.equal((await w.raw('saveCandidate', { name: 'x', email: 'x@example.com', with_home: true }, candidate)).status, 403);
+});
+
+test('Sheet script: a transcript is found by its key however many others are stored, including scattered parts', async () => {
+  const w = makeWorld();
+  const big = (n) => ({ items: [{ r: 'c', x: ('call ' + n + ' ').repeat(9000), t: n }] });
+  for (let n = 0; n < 6; n++) await w.deps.store.write([{ op: 'putBlob', tab: 'Transcripts', key: 's' + n, value: big(n) }]);
+  await w.deps.store.write([{ op: 'putBlob', tab: 'Transcripts', key: 's2', value: big(22) }]); // rewritten, so it now sits last
+  assert.deepEqual(await w.deps.store.getBlob('Transcripts', 's4'), big(4));
+  assert.deepEqual(await w.deps.store.getBlob('Transcripts', 's2'), big(22));
+  assert.equal(await w.deps.store.getBlob('Transcripts', 'nope'), null);
+  // parts that are not next to each other (rows of another call in between) still come back whole and in order
+  const sheet = w.gas.sheets.get('Transcripts');
+  const rows = sheet.cells.slice(1).filter((r) => r[0] === 's5');
+  assert.ok(rows.length >= 2);
+  sheet.cells.push([rows[0][0], rows[0][1], rows[0][2]]); sheet.cells.splice(sheet.cells.indexOf(rows[0]), 1);
+  assert.deepEqual(await w.deps.store.getBlob('Transcripts', 's5'), big(5));
+});

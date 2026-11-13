@@ -208,14 +208,34 @@ function readTab_(name) {
   return out;
 }
 
+/**
+ * Reads one transcript or report. Only the narrow key column is scanned to find its rows, and only those rows are
+ * loaded, so opening a report stays quick however many calls are stored. (Reading the whole tab, as this used to,
+ * gets slower with every call ever taken.)
+ */
 function readBlob_(tab, key) {
-  var rows = readTab_(tab);
+  var s = sheet_(tab);
+  var last = s.getLastRow();
+  if (last < 2) return null;
+  var keys = s.getRange(2, 1, last - 1, 1).getValues();
+  var first = -1, end = -1, scattered = false;
+  for (var i = 0; i < keys.length; i++) {
+    if (fromCell_(keys[i][0]) !== key) continue;
+    if (first < 0) first = i;
+    else if (i !== end + 1) scattered = true;
+    end = i;
+  }
+  if (first < 0) return null;
+  // The parts of one item are written together, so they sit in one block of rows. Read just that block.
+  var block = s.getRange(first + 2, 1, end - first + 1, 3).getValues();
   var parts = [];
-  for (var i = 0; i < rows.length; i++) if (rows[i].key === key) parts.push(rows[i]);
-  if (!parts.length) return null;
-  parts.sort(function (a, b) { return Number(a.part) - Number(b.part); });
+  for (var j = 0; j < block.length; j++) {
+    if (scattered && fromCell_(block[j][0]) !== key) continue;
+    parts.push({ part: Number(fromCell_(block[j][1])), data: fromCell_(block[j][2]) });
+  }
+  parts.sort(function (a, b) { return a.part - b.part; });
   var text = '';
-  for (var j = 0; j < parts.length; j++) text += parts[j].data;
+  for (var k = 0; k < parts.length; k++) text += parts[k].data;
   return text;
 }
 

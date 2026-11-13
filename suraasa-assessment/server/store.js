@@ -20,7 +20,7 @@ const TYPES = {
 
 const BLOB_PART = 40000;
 
-function decode(tab, row) {
+export function decode(tab, row) {
   const t = TYPES[tab] || {};
   const out = { ...row };
   for (const f of t.num || []) out[f] = out[f] === '' || out[f] === undefined ? null : Number(out[f]);
@@ -32,7 +32,7 @@ function decode(tab, row) {
   return out;
 }
 
-function encode(tab, row) {
+export function encode(tab, row) {
   const t = TYPES[tab] || {};
   const out = {};
   for (const [k, v] of Object.entries(row)) {

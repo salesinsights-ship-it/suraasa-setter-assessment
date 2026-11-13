@@ -2,7 +2,7 @@ import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { getSession, setSession, rpc } from './api.js';
-import { ToastProvider, useHash, Icon, Loading, Skeleton, go } from './ui.jsx';
+import { ToastProvider, ConfirmProvider, useHash, Icon, Loading, Skeleton, go } from './ui.jsx';
 import Login from './pages/Login.jsx';
 import { AdminProvider, useAdmin } from './pages/admin.jsx';
 
@@ -30,7 +30,7 @@ function Brand() {
 
 function CandidateApp({ user, signOut }) {
   const route = useHash();
-  if (route[0] === 'call' && route[1]) return <Suspense fallback={<Loading text="Getting the call ready" />}><Call assignmentId={route[1]} personaId={route[2] || ''} /></Suspense>;
+  if (route[0] === 'call' && route[1]) return <main style={{ height: '100%' }}><Suspense fallback={<Loading text="Getting the call ready" />}><Call assignmentId={route[1]} personaId={route[2] || ''} /></Suspense></main>;
   return (
     <>
       <header className="topbar"><Brand /><span className="right small hide-m muted">{user.name}</span><button className="btn sm" onClick={signOut}>Sign out</button></header>
@@ -98,4 +98,4 @@ function App() {
   return session.user.role === 'candidate' ? <CandidateApp user={session.user} signOut={signOut} /> : <StaffApp user={session.user} signOut={signOut} />;
 }
 
-createRoot(document.getElementById('root')).render(<ToastProvider><App /></ToastProvider>);
+createRoot(document.getElementById('root')).render(<ToastProvider><ConfirmProvider><App /></ConfirmProvider></ToastProvider>);

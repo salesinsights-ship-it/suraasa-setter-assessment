@@ -2,6 +2,7 @@ import {
   AppError, rand, hashCode, newCode, safeEqual, signToken, readToken, chainOf, chainAdd,
 } from './auth.js';
 import { LlmError, DEFAULT_MODELS } from './llm.js';
+import { encode, decode } from './store.js';
 import { SEED_PERSONAS, DEFAULT_TEMPLATE, SEED_KNOWLEDGE, DEFAULT_CONFIG, TRAINING_PERSONAS, TRAINING_TEMPLATE } from './seed.js';
 import { teacherMessages, teacherLiveSystem, cleanReply, evaluatorMessages, parseJson } from './prompts.js';
 import { LIVE_WS, LIVE_VOICES } from './live.js';
@@ -91,6 +92,18 @@ const IN_CALL = { turn: ['Personas', 'Config'], liveToken: ['Personas'], putReco
  */
 function requestStore(store) {
   const seen = new Map();
+  // A change is also made to this request's own copy of the tab, exactly as the Sheet will store it, so the
+  // updated lists can be sent back with the reply instead of being fetched from the Sheet a second time.
+  const same = (tab, row) => decode(tab, encode(tab, row));
+  function apply(o) {
+    const hit = seen.get(o.tab);
+    if (!hit) return;
+    if (!hit.fresh || !['append', 'update', 'remove', 'removeWhere'].includes(o.op)) { seen.delete(o.tab); return; }
+    if (o.op === 'append') hit.rows = hit.rows.concat([same(o.tab, o.row)]);
+    else if (o.op === 'update') hit.rows = hit.rows.map((r) => (r.id === o.id ? decode(o.tab, { ...encode(o.tab, r), ...encode(o.tab, o.patch), id: r.id }) : r));
+    else if (o.op === 'remove') hit.rows = hit.rows.filter((r) => r.id !== o.id);
+    else hit.rows = hit.rows.filter((r) => String(r[o.field] ?? '') !== String(o.value));
+  }
   return {
     ...store,
     async read(tabs, opts = {}) {
@@ -101,8 +114,79 @@ function requestStore(store) {
       }
       return Object.fromEntries(tabs.map((t) => [t, seen.get(t).rows]));
     },
-    async write(ops) { for (const o of ops) seen.delete(o.tab); return store.write(ops); },
+    async write(ops) {
+      await store.write(ops); // if the Sheet refuses the change, this request's copy is left as it was
+      for (const o of ops) apply(o);
+    },
   };
+}
+
+const HOME_TABS = ['Candidates', 'Assignments', 'Sessions', 'Personas', 'Templates', 'Knowledge', 'Decisions', 'Config', 'Users'];
+// After one of these, the recruiter's lists have changed. The reply carries the updated lists, so the page does not ask again.
+const CHANGES_HOME = ['saveCandidate', 'setCandidateStatus', 'deleteCandidate', 'saveAssignment', 'cancelAssignment', 'decide', 'humanReview', 'voidSession',
+  'savePersona', 'saveTemplate', 'saveKnowledge', 'saveUser', 'saveConfig', 'installTraining', 'score'];
+
+/** Everything a recruiter or admin is allowed to see, built from tabs already in hand. */
+function adminView(d, user, deps) {
+  const isAdmin = user.role === 'super_admin';
+  const candidates = d.Candidates.filter((cand) => isAdmin || (user.role === 'recruiter' && cand.recruiter_id === user.id));
+  const ids = new Set(candidates.map((c) => c.id));
+  const cfg = configOf(d.Config);
+  return {
+    ok: true, user: publicUser(user),
+    candidates,
+    assignments: d.Assignments.filter((a) => ids.has(a.candidate_id)),
+    sessions: d.Sessions.filter((x) => ids.has(x.candidate_id)),
+    decisions: d.Decisions.filter((x) => ids.has(x.candidate_id)),
+    personas: d.Personas.map(flat),
+    templates: d.Templates,
+    knowledge: d.Knowledge,
+    users: isAdmin ? d.Users.map(publicUser) : d.Users.filter((u) => u.role !== 'candidate').map((u) => ({ id: u.id, name: u.name, role: u.role })),
+    config: isAdmin ? { ...cfg, default_models: DEFAULT_MODELS } : { recruiters_edit_templates: cfg.recruiters_edit_templates, review_every: cfg.review_every },
+    status: { sheet: true, ai: !!deps.configured?.ai, live: !!deps.live },
+  };
+}
+
+/** A candidate's or intern's own home page. Null when their candidate record is missing. */
+function candidateView(d, user, deps, now) {
+  const me = d.Candidates.find((c) => c.user_id === user.id);
+  if (!me) return null;
+  const personas = d.Personas.map(flat);
+  const mySessions = d.Sessions.filter((x) => x.candidate_id === me.id);
+  const assignments = d.Assignments.filter((a) => a.candidate_id === me.id && a.status !== 'cancelled').map((a) => {
+    const tpl = d.Templates.find((t) => t.id === a.template_id);
+    const st = attemptState(a, mySessions, now);
+    const ids = a.persona_ids || [];
+    return {
+      id: a.id, status: a.status, due: a.due, duration_min: a.duration_min, attempts: a.attempts, allow_typed: a.allow_typed, practice: a.persona_mode === 'practice',
+      persona_mode: a.persona_mode, used: st.used, left: st.left, blocked: st.blocked,
+      min_turns: tpl?.data?.min_turns || 4,
+      // A randomly assigned teacher stays hidden until the phone is answered.
+      personas: a.persona_mode === 'random' ? [] : personas.filter((q) => ids.includes(q.id) && q.active).map(publicPersona),
+    };
+  });
+  const sessions = mySessions.filter((x) => x.status !== 'in_progress').map((x) => {
+    const a = d.Assignments.find((q) => q.id === x.assignment_id);
+    const tpl = d.Templates.find((t) => t.id === x.template_id);
+    const policy = tpl?.data?.candidate_feedback || 'none';
+    const show = policy !== 'none' && x.status === 'scored' && !x.voided;
+    return {
+      id: x.id, assignment_id: a?.id, started_at: x.started_at, duration_sec: x.duration_sec, status: x.status, voided: x.voided, practice: a?.persona_mode === 'practice',
+      scores: show && a?.persona_mode === 'practice' ? x.scores || null : null,
+      persona_name: personas.find((q) => q.id === x.persona_id)?.name || 'Teacher',
+      total: show ? x.total : null, category: show ? x.category : null, feedback: show,
+    };
+  }).sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
+  // Where earlier attempts are switched off, only the latest attempt of each assessment shows feedback.
+  const seenA = new Set();
+  for (const x of sessions) {
+    const tpl = d.Templates.find((t) => t.id === mySessions.find((y) => y.id === x.id)?.template_id);
+    if (seenA.has(x.assignment_id) && tpl?.data?.show_previous === false) { x.total = null; x.category = null; x.feedback = false; }
+    seenA.add(x.assignment_id);
+  }
+  const cfg = configOf(d.Config);
+  const liveOn = !!deps.live && cfg.voice_engine !== 'browser';
+  return { ok: true, candidate: { id: me.id, code: me.code, name: me.name, role_applied: me.role_applied }, assignments, sessions, live: liveOn, record: liveOn && !!cfg.record_audio };
 }
 
 export async function handle(body, deps) {
@@ -121,7 +205,10 @@ export async function handle(body, deps) {
     const mail = email(body.email);
     const f = fails.get(mail);
     if (f && f.until > now) throw new AppError('throttled', 'Too many wrong codes. Wait a few minutes and try again.', 429);
-    const { Users } = await store.read(['Users'], { fresh: true });
+    // One request to the Sheet brings the sign-in check and everything the first page needs, so the page after
+    // signing in appears without asking the Sheet again.
+    const d = await store.read(HOME_TABS, { fresh: true });
+    const { Users } = d;
     if (!Users.some((u) => u.role === 'super_admin' && u.active)) {
       throw new AppError('no_admin', 'Nobody has been set up yet. In the Google Sheet, click Setter Assessment > Create first Super Admin.', 403);
     }
@@ -138,7 +225,13 @@ export async function handle(body, deps) {
       { op: 'update', tab: 'Users', id: user.id, patch: { last_login: iso(now) } },
       audit(user, 'signin', user.email, '', now),
     ]);
-    return { ok: true, token: signToken(secret, 'session', { uid: user.id, role: user.role, exp: now + 12 * HOUR }), user: publicUser(user) };
+    const after = await store.read(HOME_TABS, { fresh: true }); // served from this request's own copy, not the Sheet
+    const me = after.Users.find((u) => u.id === user.id);
+    let home = null;
+    if (me.role === 'candidate') home = candidateView(after, me, deps, now);
+    // The very first admin sign-in still has teachers and the rubric to create, so it loads the dashboard the usual way.
+    else if (after.Personas.length && after.Templates.length && after.Knowledge.length) home = adminView(after, me, deps);
+    return { ok: true, token: signToken(secret, 'session', { uid: user.id, role: user.role, exp: now + 12 * HOUR }), user: publicUser(me), home };
   }
 
   /* ------------------------------------------------------------ signed in */
@@ -146,7 +239,21 @@ export async function handle(body, deps) {
   const claim = readToken(secret, 'session', body.token, now);
   if (!claim) throw new AppError('signed_out', 'Please sign in again.', 401);
   // One request to the Sheet brings the sign-in check and everything this action will read.
-  if (PRELOAD[action]) await store.read(['Users', ...PRELOAD[action]], { fresh: true });
+  const carryHome = !!body.with_home && STAFF.includes(claim.role) && CHANGES_HOME.includes(action);
+  // A report's pieces are named by the call id, so they can be fetched at the same moment as the permission check
+  // instead of after it. Nothing is returned unless the check passes.
+  let early = null;
+  if (action === 'getSession') {
+    const sid = s(body.session_id, 40);
+    const staff = STAFF.includes(claim.role);
+    early = Promise.all([
+      deps.store.getBlob('Reports', sid).catch(() => null),
+      staff ? deps.store.getBlob('Transcripts', sid).catch(() => null) : null,
+      staff ? deps.store.write([audit({ id: claim.uid, role: claim.role }, 'report.view', sid, '', now)]).catch(() => {}) : null,
+    ]);
+  }
+  if (carryHome) await store.read(HOME_TABS, { fresh: true });
+  else if (PRELOAD[action]) await store.read(['Users', ...PRELOAD[action]], { fresh: true });
   else if (IN_CALL[action]) await store.read(['Users', ...IN_CALL[action]], { maxAgeMs: 120000 });
   const { Users } = await store.read(['Users']);
   const user = Users.find((u) => u.id === claim.uid && u.active);
@@ -178,7 +285,7 @@ export async function handle(body, deps) {
     return { session, cand, own };
   }
 
-  switch (action) {
+  const result = await (async () => { switch (action) {
     case 'me':
       return { ok: true, user: publicUser(user) };
 
@@ -187,44 +294,9 @@ export async function handle(body, deps) {
     case 'myHome': {
       if (user.role !== 'candidate') throw new AppError('forbidden', 'This page is for candidates.', 403);
       const d = await store.read(['Candidates', 'Assignments', 'Sessions', 'Personas', 'Templates', 'Config'], { fresh: true });
-      const me = d.Candidates.find((c) => c.user_id === user.id);
-      if (!me) throw new AppError('not_found', 'Your candidate record is missing. Contact your recruiter.', 404);
-      const personas = d.Personas.map(flat);
-      const mySessions = d.Sessions.filter((x) => x.candidate_id === me.id);
-      const assignments = d.Assignments.filter((a) => a.candidate_id === me.id && a.status !== 'cancelled').map((a) => {
-        const tpl = d.Templates.find((t) => t.id === a.template_id);
-        const st = attemptState(a, mySessions, now);
-        const ids = a.persona_ids || [];
-        return {
-          id: a.id, status: a.status, due: a.due, duration_min: a.duration_min, attempts: a.attempts, allow_typed: a.allow_typed, practice: a.persona_mode === 'practice',
-          persona_mode: a.persona_mode, used: st.used, left: st.left, blocked: st.blocked,
-          min_turns: tpl?.data?.min_turns || 4,
-          // A randomly assigned teacher stays hidden until the phone is answered.
-          personas: a.persona_mode === 'random' ? [] : personas.filter((q) => ids.includes(q.id) && q.active).map(publicPersona),
-        };
-      });
-      const sessions = mySessions.filter((x) => x.status !== 'in_progress').map((x) => {
-        const a = d.Assignments.find((q) => q.id === x.assignment_id);
-        const tpl = d.Templates.find((t) => t.id === x.template_id);
-        const policy = tpl?.data?.candidate_feedback || 'none';
-        const show = policy !== 'none' && x.status === 'scored' && !x.voided;
-        return {
-          id: x.id, assignment_id: a?.id, started_at: x.started_at, duration_sec: x.duration_sec, status: x.status, voided: x.voided, practice: a?.persona_mode === 'practice',
-          scores: show && a?.persona_mode === 'practice' ? x.scores || null : null,
-          persona_name: personas.find((q) => q.id === x.persona_id)?.name || 'Teacher',
-          total: show ? x.total : null, category: show ? x.category : null, feedback: show,
-        };
-      }).sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
-      // Where earlier attempts are switched off, only the latest attempt of each assessment shows feedback.
-      const seen = new Set();
-      for (const x of sessions) {
-        const tpl = d.Templates.find((t) => t.id === mySessions.find((y) => y.id === x.id)?.template_id);
-        if (seen.has(x.assignment_id) && tpl?.data?.show_previous === false) { x.total = null; x.category = null; x.feedback = false; }
-        seen.add(x.assignment_id);
-      }
-      const cfg = configOf(d.Config);
-      const liveOn = !!deps.live && cfg.voice_engine !== 'browser';
-      return { ok: true, candidate: { id: me.id, code: me.code, name: me.name, role_applied: me.role_applied }, assignments, sessions, live: liveOn, record: liveOn && !!cfg.record_audio };
+      const view = candidateView(d, user, deps, now);
+      if (!view) throw new AppError('not_found', 'Your candidate record is missing. Contact your recruiter.', 404);
+      return view;
     }
 
     case 'startCall': {
@@ -468,11 +540,9 @@ export async function handle(body, deps) {
       const persona = d.Personas.map(flat).find((q) => q.id === session.persona_id);
       // The report, the transcript and the audit note are independent, so they are fetched together, not one after another.
       const wantReport = session.status === 'scored' && !session.purged;
-      const [report, transcriptBlob] = await Promise.all([
-        wantReport ? store.getBlob('Reports', session.id) : null,
-        !own && !session.purged ? store.getBlob('Transcripts', session.id) : null,
-        own ? null : store.write([log('report.view', session.id, cand.code)]).catch(() => {}),
-      ]);
+      const [earlyReport, earlyTranscript] = await early;
+      const report = wantReport ? earlyReport : null;
+      const transcriptBlob = !own && !session.purged ? earlyTranscript : null;
       if (own) {
         const policy = session.voided ? 'none' : tpl?.data?.candidate_feedback || 'none';
         return {
@@ -497,22 +567,7 @@ export async function handle(body, deps) {
       const tabs = ['Candidates', 'Assignments', 'Sessions', 'Personas', 'Templates', 'Knowledge', 'Decisions', 'Config', 'Users'];
       let d = await store.read(tabs, { fresh: true });
       if (isAdmin && (!d.Personas.length || !d.Templates.length || !d.Knowledge.length)) { await seedIfEmpty(); d = await store.read(tabs, { fresh: true }); }
-      const candidates = d.Candidates.filter(canSee);
-      const ids = new Set(candidates.map((c) => c.id));
-      const cfg = configOf(d.Config);
-      return {
-        ok: true, user: publicUser(user),
-        candidates,
-        assignments: d.Assignments.filter((a) => ids.has(a.candidate_id)),
-        sessions: d.Sessions.filter((x) => ids.has(x.candidate_id)),
-        decisions: d.Decisions.filter((x) => ids.has(x.candidate_id)),
-        personas: d.Personas.map(flat),
-        templates: d.Templates,
-        knowledge: d.Knowledge,
-        users: isAdmin ? d.Users.map(publicUser) : d.Users.filter((u) => u.role !== 'candidate').map((u) => ({ id: u.id, name: u.name, role: u.role })),
-        config: isAdmin ? { ...cfg, default_models: DEFAULT_MODELS } : { recruiters_edit_templates: cfg.recruiters_edit_templates, review_every: cfg.review_every },
-        status: { sheet: true, ai: !!deps.configured?.ai, live: !!deps.live },
-      };
+      return adminView(d, user, deps);
     }
 
     case 'saveCandidate': {
@@ -868,7 +923,13 @@ export async function handle(body, deps) {
 
     default:
       throw new AppError('unknown', 'Unknown request.', 400);
+  } })();
+  if (carryHome && result?.ok) {
+    const d = await store.read(HOME_TABS, { fresh: true }); // this request's own, already updated copy
+    const self = d.Users.find((u) => u.id === user.id) || user;
+    result.home = adminView(d, self, deps);
   }
+  return result;
 }
 
 function cleanItems(raw) {

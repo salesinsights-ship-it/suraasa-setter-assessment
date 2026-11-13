@@ -57,7 +57,7 @@ export default function Dashboard() {
       </div>
 
       <h2 className="mt-l">Recent calls</h2>
-      <div className="table-wrap mt">
+      <div className="table-wrap mt" tabIndex={0} role="group" aria-label="Table, scrolls sideways on small screens">
         {!recent.length ? <Empty title="No calls yet">Add a candidate, assign a mock call and share their access code.</Empty> : (
           <table>
             <thead><tr><th>Candidate</th><th>Teacher</th><th>When</th><th>Status</th><th>Score</th><th>AI recommendation</th></tr></thead>

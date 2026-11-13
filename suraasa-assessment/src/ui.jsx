@@ -143,11 +143,85 @@ const paths = {
 };
 export const Icon = ({ name }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={name === 'hang' ? { transform: 'rotate(135deg)' } : undefined}><path d={paths[name]} /></svg>;
 
+/* ---------------------------------------------------------- confirmations */
+
+const ConfirmCtx = createContext(async () => false);
+/**
+ * Asks before anything that cannot be undone. `await confirm({ title, body, ok, danger })` gives true or false.
+ * With `input: { label, min }` it asks for a written reason and gives the text, or null if cancelled.
+ */
+export const useConfirm = () => useContext(ConfirmCtx);
+export function ConfirmProvider({ children }) {
+  const [q, setQ] = useState(null);
+  const [text, setText] = useState('');
+  const ask = useCallback((opts) => new Promise((resolve) => { setText(''); setQ({ ...opts, resolve }); }), []);
+  const close = (value) => { q.resolve(value); setQ(null); };
+  const need = q?.input ? (q.input.min || 1) : 0;
+  return (
+    <ConfirmCtx.Provider value={ask}>
+      {children}
+      {q && (
+        <Modal title={q.title} onClose={() => close(q.input ? null : false)}>
+          <form className="col" data-testid="confirm" onSubmit={(e) => { e.preventDefault(); if (!q.input || text.trim().length >= need) close(q.input ? text.trim() : true); }}>
+            {q.body && <p style={{ whiteSpace: 'pre-line' }}>{q.body}</p>}
+            {q.input && <Field label={q.input.label} hint={need > 1 ? `at least ${need} characters` : ''}><Input autoFocus value={text} onChange={(e) => setText(e.target.value)} data-testid="confirm-input" /></Field>}
+            <div className="row" style={{ justifyContent: 'flex-end' }}>
+              <Btn onClick={() => close(q.input ? null : false)}>{q.cancel || 'Cancel'}</Btn>
+              <Btn kind={q.danger ? 'danger' : 'primary'} type="submit" disabled={!!q.input && text.trim().length < need} data-testid="confirm-ok" autoFocus={!q.input}>{q.ok || 'Confirm'}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </ConfirmCtx.Provider>
+  );
+}
+
+/* ------------------------------------------------------------------ charts */
+
+/**
+ * One line over time: a 2px line, a dot per point, light grid, and a tooltip that follows the pointer.
+ * `points` is [{ label, value, note }] in time order. A single series, so the title names it and there is no legend.
+ */
+export function TrendChart({ points, max = 100, height = 180, unit = '' }) {
+  const [at, setAt] = useState(null);
+  if (points.length < 2) return <p className="small muted">A trend appears once there are scored calls on two different days.</p>;
+  const W = 640; const H = height; const L = 34; const R = 14; const T = 12; const B = 26;
+  const x = (i) => L + (i * (W - L - R)) / (points.length - 1);
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(p.value).toFixed(1)}`).join('');
+  const ticks = [0, max / 2, max];
+  const every = Math.ceil(points.length / 7);
+  const move = (e) => { const r = e.currentTarget.getBoundingClientRect(); const px = ((e.clientX - r.left) / r.width) * W; setAt(Math.max(0, Math.min(points.length - 1, Math.round(((px - L) / (W - L - R)) * (points.length - 1))))); };
+  const p = at === null ? null : points[at];
+  return (
+    <div style={{ position: 'relative' }} data-testid="trend">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Trend from ${points[0].value}${unit} on ${points[0].label} to ${points[points.length - 1].value}${unit} on ${points[points.length - 1].label}`} onMouseMove={move} onMouseLeave={() => setAt(null)} style={{ display: 'block', touchAction: 'none' }}>
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#e2e8f0" strokeWidth="1" /><text x={L - 8} y={y(t) + 4} textAnchor="end" fontSize="11" fill="#5b6b82">{t}</text></g>)}
+        {points.map((q, i) => (i % every === 0 || i === points.length - 1) && <text key={i} x={x(i)} y={H - 8} textAnchor={i === points.length - 1 ? 'end' : i === 0 ? 'start' : 'middle'} fontSize="11" fill="#5b6b82">{q.label}</text>)}
+        {p && <line x1={x(at)} x2={x(at)} y1={T} y2={H - B} stroke="#cbd5e1" strokeWidth="1" />}
+        <path d={path} fill="none" stroke="#4666f6" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {points.map((q, i) => <circle key={i} cx={x(i)} cy={y(q.value)} r={at === i ? 5 : 4} fill="#4666f6" stroke="#fff" strokeWidth="2" />)}
+      </svg>
+      {p && <div className="small" style={{ position: 'absolute', top: 0, left: `${(x(at) / W) * 100}%`, transform: `translateX(${at > points.length / 2 ? '-105%' : '5%'})`, background: '#0f172a', color: '#fff', padding: '6px 10px', borderRadius: 8, pointerEvents: 'none', whiteSpace: 'nowrap', boxShadow: 'var(--shadow-l)' }}><b>{p.value}{unit}</b> · {p.label}{p.note ? <div style={{ opacity: 0.8 }}>{p.note}</div> : null}</div>}
+    </div>
+  );
+}
+
+/** A tiny line of recent scores beside a number. The number carries the value; this only shows the direction. */
+export function Spark({ values, max = 100 }) {
+  if (values.length < 2) return null;
+  const W = 72; const H = 22;
+  const pts = values.map((v, i) => `${(2 + (i * (W - 4)) / (values.length - 1)).toFixed(1)},${(2 + (1 - v / max) * (H - 4)).toFixed(1)}`);
+  const last = pts[pts.length - 1].split(',');
+  return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true" style={{ display: 'block', marginTop: 4 }}><polyline points={pts.join(' ')} fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" /><circle cx={last[0]} cy={last[1]} r="2.5" fill="#4666f6" /></svg>;
+}
+
 /** Loads a call recording on request and plays it. The audio is fetched only when someone presses the button. */
 export function Recording({ sessionId, rec, load }) {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]); // free the audio from memory when the page is left
   if (!rec?.parts) return null;
   const fetchIt = async () => {
     setError(''); setBusy('Loading');
