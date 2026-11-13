@@ -3,6 +3,7 @@ import { rpc, rpcRetry } from '../api.js';
 import { Avatar, Btn, Icon, Loading, fmtDur, go } from '../ui.jsx';
 import { createVoice, voiceSupported, isPhone, ring } from '../voice.js';
 import { createLive, liveSupported } from '../live.js';
+import { uploadRecording } from '../recording.js';
 
 const KEY = (id) => 'sa.call.' + id;
 const load = (id) => { try { return JSON.parse(localStorage.getItem(KEY(id)) || 'null'); } catch { return null; } };
@@ -38,7 +39,7 @@ export default function Call({ assignmentId, personaId }) {
   useEffect(() => {
     rpc('myHome').then((d) => {
       const a = d.assignments.find((x) => x.id === assignmentId);
-      if (!a) setError('This call was not found.'); else setInfo({ ...a, live: !!d.live && liveSupported() });
+      if (!a) setError('This call was not found.'); else setInfo({ ...a, live: !!d.live && liveSupported(), record: !!d.record });
     }).catch((e) => setError(e.message));
     const on = () => setOnline(true); const off = () => setOnline(false);
     window.addEventListener('online', on); window.addEventListener('offline', off);
@@ -76,13 +77,16 @@ export default function Call({ assignmentId, personaId }) {
     const c = r.call;
     const vs = r.voice?.stats() || {};
     const meta = { ...vs, reconnects: r.reconnects + (vs.live_reconnects || 0), headset: c.headset, browser: navigator.userAgent.slice(0, 110) };
-    r.voice?.close();
     setPhase('saving');
+    if (r.audio === undefined) r.audio = (await r.voice?.stopRecording?.()) || null;
+    r.voice?.close();
     try {
       const done = await rpcRetry('endCall', { callToken: c.callToken, items: c.items, chain: c.chain, meta, reason }, { tries: 6 });
       save(assignmentId, null);
       if (done.status !== 'ended') { setDoneInfo(done); setPhase('done'); return; }
       setPhase('scoring');
+      // The transcript is safe first. The recording then goes up while the call is being assessed; if it fails, the call still counts.
+      const upload = r.audio ? uploadRecording(c.callToken, r.audio).catch(() => false) : Promise.resolve(false);
       for (let i = 0; i < 8; i++) {
         // eslint-disable-next-line no-await-in-loop
         const s = await rpc('score', { session_id: done.session_id }).catch(() => ({ pending: true, retry_after: 10 }));
@@ -90,6 +94,8 @@ export default function Call({ assignmentId, personaId }) {
         // eslint-disable-next-line no-await-in-loop
         await new Promise((res) => setTimeout(res, Math.min(30, s.retry_after || 10) * 1000));
       }
+      setPhase('recording');
+      await Promise.race([upload, new Promise((res) => setTimeout(res, 120000))]);
       go('/result/' + done.session_id);
     } catch (e) {
       r.finishing = false;
@@ -154,6 +160,7 @@ export default function Call({ assignmentId, personaId }) {
       onState: (s) => { if (!ref.current.ringing) setLive(s); },
       onEnd: () => finish('teacher'),
       onLost: () => finish('connection'),
+      record: !!c.record,
     });
   }
 
@@ -175,7 +182,7 @@ export default function Call({ assignmentId, personaId }) {
         const out = await rpc('startCall', { assignment_id: assignmentId, persona_id: personaId || undefined, lang, mode });
         c = { ...out, lang, headset, client_start: Date.now() };
       }
-      ref.current.ended = false; ref.current.finishing = false;
+      ref.current.ended = false; ref.current.finishing = false; ref.current.audio = undefined;
       persist(c);
       setPhase('live');
       if (c.mode === 'live' && c.engine !== 'browser') {
@@ -266,7 +273,7 @@ export default function Call({ assignmentId, personaId }) {
             <li>The call ends at {info.duration_min} minutes, or earlier if you or the teacher end it. You need at least {info.min_turns} turns for it to be assessed.</li>
             <li>{info.practice ? `You have ${info.left} practice call${info.left === 1 ? '' : 's'} left today.` : `You have ${info.left} attempt${info.left === 1 ? '' : 's'}.`} A call that drops for technical reasons can be resumed.</li>
           </ul>
-          <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ marginTop: 4 }} data-testid="consent" /><span className="small">{info.live ? 'I understand that my voice is sent to Google\'s Gemini service to run this call and turn it into text, that Google may use it to improve its products, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.' : 'I understand that my speech is turned into text by my browser\'s speech service, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.'}</span></label>
+          <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ marginTop: 4 }} data-testid="consent" /><span className="small">{info.live ? 'I understand that my voice is sent to Google\'s Gemini service to run this call and turn it into text, that Google may use it to improve its products, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.' + (info.record ? ' The audio of this call is recorded and kept in Suraasa\'s Google Drive.' : '') : 'I understand that my speech is turned into text by my browser\'s speech service, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.'}</span></label>
         </div>
         {!supported && canTyped && <div className="note mt">Your recruiter has allowed a typed call for this assessment. You will type instead of speaking.</div>}
         <div className="row mt wrap"><Btn kind="primary lg" disabled={!ready || !!info.blocked} onClick={() => begin(null)} data-testid="start-call">Start the call</Btn>{!consent && <span className="small muted">Tick the box above to continue.</span>}{consent && !ready && <span className="small muted">Check your microphone first.</span>}</div>
@@ -274,12 +281,12 @@ export default function Call({ assignmentId, personaId }) {
     );
   }
 
-  if (phase === 'saving' || phase === 'scoring' || phase === 'saving-failed') {
+  if (phase === 'saving' || phase === 'scoring' || phase === 'recording' || phase === 'saving-failed') {
     return (
       <div className="phone-wrap"><div className="phone" style={{ justifyContent: 'center', gap: 16 }}>
         {phase !== 'saving-failed' && <span className="spin" style={{ width: 36, height: 36 }} />}
-        <h1>{phase === 'saving' ? 'Saving your call' : phase === 'scoring' ? 'Assessing your call' : 'Could not save yet'}</h1>
-        <p className="sub">{phase === 'scoring' ? 'This usually takes under a minute. Keep this page open.' : phase === 'saving' ? 'One moment.' : error}</p>
+        <h1>{phase === 'saving' ? 'Saving your call' : phase === 'scoring' ? 'Assessing your call' : phase === 'recording' ? 'Saving the recording' : 'Could not save yet'}</h1>
+        <p className="sub">{phase === 'scoring' ? 'This usually takes under a minute. Keep this page open.' : phase === 'saving' ? 'One moment.' : phase === 'recording' ? 'Almost done. Keep this page open.' : error}</p>
         {phase === 'saving-failed' && <Btn kind="primary" onClick={() => { setError(''); finish('connection'); }}>Try again</Btn>}
       </div></div>
     );

@@ -116,6 +116,26 @@ const paths = {
 };
 export const Icon = ({ name }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={name === 'hang' ? { transform: 'rotate(135deg)' } : undefined}><path d={paths[name]} /></svg>;
 
+/** Loads a call recording on request and plays it. The audio is fetched only when someone presses the button. */
+export function Recording({ sessionId, rec, load }) {
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  if (!rec?.parts) return null;
+  const fetchIt = async () => {
+    setError(''); setBusy('Loading');
+    try { setUrl(await load(sessionId, rec, (n, of) => setBusy(`Loading ${Math.round((n / of) * 100)}%`))); } catch (e) { setError(e.message || 'The recording could not be loaded.'); }
+    setBusy('');
+  };
+  return (
+    <div className="card row between wrap no-print" data-testid="recording" style={{ marginBottom: 16 }}>
+      <div><h3>Call recording</h3><p className="small muted">{url ? 'Both voices, as recorded in the caller\'s browser.' : `About ${Math.max(1, Math.round((rec.bytes || 0) / 1048576 * 10) / 10)} MB. Loaded only when you ask for it.`}</p>{error && <p className="small" style={{ color: 'var(--bad)' }}>{error}</p>}</div>
+      {url ? <div className="row wrap"><audio controls src={url} data-testid="recording-audio" /><a className="btn sm" href={url} download={`call-${sessionId}.${(rec.mime || '').includes('mp4') ? 'm4a' : (rec.mime || '').includes('ogg') ? 'ogg' : 'webm'}`}>Download</a></div>
+        : <Btn onClick={fetchIt} busy={!!busy} data-testid="load-recording">{busy || 'Listen to the call'}</Btn>}
+    </div>
+  );
+}
+
 export function downloadText(filename, text, type = 'text/plain') {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: type + ';charset=utf-8' }));

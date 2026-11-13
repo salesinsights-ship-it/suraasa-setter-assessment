@@ -503,6 +503,7 @@ await step('Intern practice: admin adds the training pack and gives practice acc
   await ap.waitForSelector('td:has-text("Practice, 10 teachers")');
   await ap.context().close();
 
+  assert.ok((await world.rpc('saveConfig', { config: { record_audio: true } }, adminToken)).ok);
   const ip = await open();
   await signIn(ip, 'isha@example.com', made.access_code);
   await ip.waitForSelector('[data-testid=assignment]');
@@ -516,6 +517,7 @@ await step('Intern practice: admin adds the training pack and gives practice acc
   await ip.click('text=Check microphone');
   await ip.waitForSelector('text=Microphone is allowed');
   assert.ok((await ip.textContent('body')).includes('practice calls left today') && (await ip.textContent('body')).includes('training team'));
+  assert.ok((await ip.textContent('body')).includes('audio of this call is recorded'), 'the caller is told about recording before the call');
   await ip.check('[data-testid=consent]');
   await ip.click('[data-testid=start-call]');
   await waitState(ip, 'listening');
@@ -537,6 +539,14 @@ await step('Intern practice: admin adds the training pack and gives practice acc
   assert.ok(result.includes('Training recommendation') && !result.includes('hiring recommendation'));
   assert.equal(await ip.locator('[data-testid=param]').count(), 8);
   await shot(ip, '22-intern-result');
+  // the recording made in the browser reached Drive in pieces and plays back from the result page
+  const folder = [...world.gas.folders.values()].find((f) => f.getId().includes('recordings'));
+  assert.ok(folder && folder.files.length >= 1, 'recording pieces were stored');
+  assert.ok(folder.files[0].blob.bytes.length > 500, 'the recording holds real audio data');
+  await ip.click('[data-testid=load-recording]');
+  await ip.waitForSelector('[data-testid=recording-audio]');
+  const audio = await ip.evaluate(async () => { const a = document.querySelector('[data-testid=recording-audio]'); const b = await (await fetch(a.src)).blob(); return { size: b.size, type: b.type }; });
+  assert.ok(audio.size > 500 && audio.type.startsWith('audio/'), JSON.stringify(audio));
   const home = await world.rpc('adminHome', {}, adminToken);
   const sess = home.sessions.find((x) => x.candidate_id === made.id);
   assert.equal(sess.tech.reconnects, 0, 'a planned renewal is not counted as a connection problem');
@@ -545,6 +555,34 @@ await step('Intern practice: admin adds the training pack and gives practice acc
   assert.ok((await ip.textContent('body')).includes('2 of 3 calls left today'));
   await shot(ip, '23-intern-progress');
   await ip.context().close();
+});
+
+await step('Training page: trainers see each intern\'s practice, the team\'s weakest skills and the recording; hiring pages leave practice out', async () => {
+  const tp = await open();
+  await signIn(tp, world.admin.email, world.admin.code);
+  await tp.waitForSelector('[data-testid=stats]');
+  const before = await tp.textContent('[data-testid=stats]');
+  await tp.click('a.nav:has-text("Training")');
+  await tp.waitForSelector('[data-testid=training-table]');
+  const row = await tp.textContent('[data-testid=training-table] tbody tr:has-text("Isha Intern")');
+  assert.ok(row.includes('63') && row.includes('Needs more practice') && row.includes('Discovery and questioning'), row);
+  assert.ok((await tp.textContent('[data-testid=training-stats]')).includes('Interns with practice access'));
+  assert.equal(await tp.locator('[data-testid=team-skills] .bar').count(), 8);
+  await shot(tp, '24-training');
+  await tp.click('a.nav:has-text("Leaderboard")');
+  await tp.waitForSelector('h1:has-text("Leaderboard")');
+  assert.ok(!(await tp.textContent('main')).includes('Isha Intern'), 'practice calls stay off the hiring leaderboard');
+  await tp.click('a.nav:has-text("Training")');
+  await tp.click('[data-testid=training-table] tbody tr:has-text("Isha Intern")');
+  await tp.waitForSelector('[data-testid=recording]');
+  await tp.click('[data-testid=load-recording]');
+  await tp.waitForSelector('[data-testid=recording-audio]');
+  await shot(tp, '25-session-recording');
+  await tp.click('a.nav:has-text("Settings")');
+  await tp.click('text=AI, data and permissions');
+  assert.equal(await tp.isChecked('[data-testid=record-audio]'), true);
+  assert.ok(before.length > 0);
+  await tp.context().close();
 });
 
 await step('No JavaScript errors on any page', async () => { assert.deepEqual(errors, []); });

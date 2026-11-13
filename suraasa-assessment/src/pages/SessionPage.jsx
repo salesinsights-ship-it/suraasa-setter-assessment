@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { rpc } from '../api.js';
-import { Badge, Btn, Area, Field, Input, Loading, Modal, Select, STATUS, Tabs, downloadText, fmtDateTime, fmtDur, recTone, useAction } from '../ui.jsx';
+import { Badge, Btn, Area, Field, Input, Loading, Modal, Recording, Select, STATUS, Tabs, downloadText, fmtDateTime, fmtDur, recTone, useAction } from '../ui.jsx';
+import { loadRecording } from '../recording.js';
 import { useAdmin } from './admin.jsx';
 import ReportView, { Transcript } from './ReportView.jsx';
 
@@ -78,6 +79,8 @@ export default function SessionPage({ id }) {
       {s.status === 'ended' && <div className="card col" style={{ marginBottom: 16 }}><h2>Saved, not yet scored</h2><p>The transcript is safe. Scoring did not finish, usually because the free AI limit was reached.</p>{error && <div className="note bad">{error}</div>}<div><Btn kind="primary" busy={busy} onClick={() => score(false)}>Score this call</Btn></div></div>}
       {s.status === 'incomplete' && <div className="note warn" style={{ marginBottom: 16 }}>This call had {s.candidate_turns} candidate turn{s.candidate_turns === 1 ? '' : 's'} and {s.candidate_words} words, which is too little to assess. It was not scored and did not use an attempt.</div>}
       {['in_progress', 'abandoned'].includes(s.status) && <div className="note" style={{ marginBottom: 16 }}>{s.status === 'in_progress' ? 'This call is in progress, or was dropped without being saved.' : 'This call was dropped and restarted. Nothing was saved from it.'}</div>}
+
+      {!s.purged && <Recording sessionId={s.id} rec={s.tech?.recording} load={loadRecording} />}
 
       <Tabs tabs={[['report', 'Report'], ['transcript', 'Transcript'], ['decision', 'Your decision']]} value={tab} onChange={setTab} />
 

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { rpc } from '../api.js';
-import { Btn, Loading, go } from '../ui.jsx';
+import { Btn, Loading, Recording, go } from '../ui.jsx';
+import { loadRecording } from '../recording.js';
 import ReportView from './ReportView.jsx';
 
 /** What a candidate sees after a call. The server decides how much feedback is included. */
@@ -35,6 +36,7 @@ export default function Result({ sessionId }) {
       {s && !s.voided && s.status === 'scored' && !data.report && (
         <div className="card col" data-testid="submitted"><h2>Thank you. Your call has been submitted.</h2><p>Your recruiter will review it and get back to you. Feedback for this assessment is shared by the recruitment team.</p><div><Btn onClick={() => go('/')}>Back to your dashboard</Btn></div></div>
       )}
+      {s?.recording && <Recording sessionId={s.id} rec={s.recording} load={loadRecording} />}
       {data?.report && (
         <>
           <ReportView report={data.report} staff={false} />

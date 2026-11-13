@@ -27,6 +27,7 @@ export function createLive(opts) {
   let ws = null; let ctx = null; let stream = null; let analyser = null; let meter = null; let watch = null;
   let ready = false; let closed = false; let muted = false; let mutedAt = 0; let ending = false;
   let nextTime = 0; const sources = new Set();
+  let recDest = null; let recMic = null; let recorder = null; let recChunks = [];
   let cand = ''; let teacher = ''; let lastState = ''; let modelIndex = 0; let reconnecting = false; let refreshing = false; let quiet = false;
 
   const state = (s) => { if (s !== lastState) { lastState = s; opts.onState?.(s); } };
@@ -57,6 +58,7 @@ export function createLive(opts) {
     for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 0x8000;
     const src = ctx.createBufferSource();
     src.buffer = buf; src.connect(ctx.destination);
+    if (recDest) src.connect(recDest); // the teacher's voice goes into the recording too
     const at = Math.max(ctx.currentTime + 0.03, nextTime);
     src.start(at); nextTime = at + buf.duration;
     sources.add(src); src.onended = () => sources.delete(src);
@@ -202,6 +204,19 @@ export function createLive(opts) {
     }, 100);
     watch = setInterval(() => { if (ready && !reconnecting && !speaking()) state(muted ? 'muted' : 'listening'); }, 150);
 
+    // Recording: both voices are mixed into one stream inside the browser and compressed as they arrive.
+    if (opts.record && window.MediaRecorder) {
+      try {
+        recDest = ctx.createMediaStreamDestination();
+        recMic = ctx.createGain(); recMic.gain.value = muted ? 0 : 1;
+        source.connect(recMic); recMic.connect(recDest);
+        const type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'].find((t) => MediaRecorder.isTypeSupported(t));
+        recorder = new MediaRecorder(recDest.stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: 20000 });
+        recorder.ondataavailable = (e) => { if (e.data?.size) recChunks.push(e.data); };
+        recorder.start(4000);
+      } catch { recorder = null; recDest = null; }
+    }
+
     await connectAny(history);
   }
 
@@ -210,8 +225,20 @@ export function createLive(opts) {
     /** A note from the phone system to the teacher, such as a time warning. */
     note(text) { send({ realtimeInput: { text } }); },
     flush() { flushCandidate(); flushTeacher(); },
+    /** Stops recording and returns the audio, or null when this call was not recorded. Call it before close(). */
+    stopRecording() {
+      return new Promise((resolve) => {
+        if (!recorder || recorder.state === 'inactive') { resolve(recChunks.length ? new Blob(recChunks, { type: recorder?.mimeType || 'audio/webm' }) : null); return; }
+        const type = recorder.mimeType || 'audio/webm';
+        const done = () => resolve(recChunks.length ? new Blob(recChunks, { type }) : null);
+        recorder.onstop = done;
+        setTimeout(done, 2500); // never hold up saving the call
+        try { recorder.stop(); } catch { done(); }
+      });
+    },
     setMuted(m) {
       muted = m;
+      if (recMic) recMic.gain.value = m ? 0 : 1; // a muted microphone is silent in the recording too
       if (m) mutedAt = Date.now(); else if (mutedAt) { stats.muted_ms += Date.now() - mutedAt; mutedAt = 0; }
     },
     setLang() { /* the live model follows the speaker's language by itself */ },

@@ -215,6 +215,7 @@ export const DEFAULT_CONFIG = {
   teacher_models: null,
   evaluator_models: null,
   voice_engine: 'auto', // auto = live voice when a Gemini key is present, browser = always the browser's own voice
+  record_audio: false, // live voice calls are recorded in the browser and kept in a private Google Drive folder
 };
 
 /* ------------------------------------------------------------ intern training pack */

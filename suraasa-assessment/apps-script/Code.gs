@@ -7,7 +7,7 @@
  * Nobody can read or change data by opening the script link in a browser.
  */
 
-var API_VERSION = 1;
+var API_VERSION = 2; // 2 adds call recordings kept as files in Google Drive
 
 var TABS = {
   Users: ['id', 'email', 'name', 'role', 'active', 'code_hash', 'created_at', 'created_by', 'last_login'],
@@ -164,6 +164,10 @@ function doPost(e) {
       applyOps_(body.ops || []);
       return json_({ ok: true });
     }
+    if (body.action === 'files') return json_({ ok: true, files: true });
+    if (body.action === 'putFile') { putFile_(String(body.name), String(body.data || ''), String(body.mime || 'application/octet-stream')); return json_({ ok: true }); }
+    if (body.action === 'getFile') return json_({ ok: true, data: getFile_(String(body.name)) });
+    if (body.action === 'removeFiles') return json_({ ok: true, removed: removeFiles_(String(body.prefix)) });
     return json_({ ok: false, error: 'unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -306,6 +310,56 @@ function fromCell_(v) {
   return s;
 }
 
+/* ------------------------------------------------------- call recordings */
+
+/**
+ * Call audio is kept as small files in one private Drive folder, named <call id>.<part number>.part.
+ * A 20-minute call is about a dozen parts. Only the website's server can read or write them, through this script.
+ */
+function recordingsFolder_(create) {
+  var p = PropertiesService.getScriptProperties();
+  var id = p.getProperty('RECORDINGS_FOLDER_ID');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* folder was deleted: make a new one below */ } }
+  if (!create) return null;
+  var folder = DriveApp.createFolder('Setter Assessment recordings');
+  p.setProperty('RECORDINGS_FOLDER_ID', folder.getId());
+  return folder;
+}
+
+function fileName_(name) {
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{2,79}$/.test(name)) throw new Error('Bad file name');
+  return name;
+}
+
+function putFile_(name, data, mime) {
+  fileName_(name);
+  if (!data || data.length > 700000) throw new Error('File part is empty or too large');
+  var folder = recordingsFolder_(true);
+  var old = folder.getFilesByName(name);
+  while (old.hasNext()) old.next().setTrashed(true);
+  folder.createFile(Utilities.newBlob(Utilities.base64Decode(data), mime, name));
+}
+
+function getFile_(name) {
+  fileName_(name);
+  var folder = recordingsFolder_(false);
+  if (!folder) return null;
+  var it = folder.getFilesByName(name);
+  if (!it.hasNext()) return null;
+  return Utilities.base64Encode(it.next().getBlob().getBytes());
+}
+
+/** Moves every part of one call's recording to the bin. Returns how many parts were removed. */
+function removeFiles_(prefix) {
+  fileName_(prefix);
+  var folder = recordingsFolder_(false);
+  if (!folder) return 0;
+  var it = folder.getFiles();
+  var n = 0;
+  while (it.hasNext()) { var f = it.next(); if (String(f.getName()).indexOf(prefix + '.') === 0) { f.setTrashed(true); n++; } }
+  return n;
+}
+
 /* ----------------------------------------------------------- small tools */
 
 function json_(o) {
@@ -400,6 +454,7 @@ function applyRetention_() {
       ops.push({ op: 'removeBlob', tab: 'Transcripts', key: s.id });
       ops.push({ op: 'removeBlob', tab: 'Reports', key: s.id });
       ops.push({ op: 'update', tab: 'Sessions', id: s.id, patch: { purged: 'true' } });
+      try { removeFiles_(s.id); } catch (e) { /* the recording stays if Drive is unavailable; the next run tries again only for calls not yet purged */ }
     }
   }
   var purged = ops.length / 3;

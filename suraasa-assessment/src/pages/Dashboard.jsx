@@ -1,14 +1,16 @@
 import React from 'react';
 import { Badge, Empty, STATUS, fmtDateTime, go, recTone } from '../ui.jsx';
-import { useAdmin, latestScored, needsReassessment } from './admin.jsx';
+import { useAdmin, latestScored, needsReassessment, isPractice } from './admin.jsx';
 
 export default function Dashboard() {
   const { data, cands, personas, isAdmin } = useAdmin();
   const active = data.candidates.filter((c) => c.status === 'active');
-  const counted = data.sessions.filter((s) => !s.voided);
+  // Hiring figures only. Interns' practice calls are on the Training page.
+  const hiring = data.sessions.filter((s) => !isPractice(s, data.assignments));
+  const counted = hiring.filter((s) => !s.voided);
   const completed = counted.filter((s) => ['scored', 'ended'].includes(s.status));
   const scored = counted.filter((s) => s.status === 'scored');
-  const pending = data.assignments.filter((a) => a.status === 'open' && cands[a.candidate_id]?.status === 'active' && completed.filter((s) => s.assignment_id === a.id).length < a.attempts);
+  const pending = data.assignments.filter((a) => a.status === 'open' && a.persona_mode !== 'practice' && cands[a.candidate_id]?.status === 'active' && completed.filter((s) => s.assignment_id === a.id).length < a.attempts);
   const best = active.map((c) => ({ c, s: latestScored(data.sessions, c.id) })).filter((x) => x.s).sort((a, b) => b.s.total - a.s.total);
   const avg = best.length ? Math.round((best.reduce((a, x) => a + x.s.total, 0) / best.length) * 10) / 10 : null;
   const strong = best.filter((x) => x.s.recommendation === 'Strongly Recommended');
@@ -17,7 +19,7 @@ export default function Dashboard() {
   const every = data.config.review_every || 5;
   const reviewDue = scored.sort((a, b) => (a.started_at < b.started_at ? -1 : 1)).filter((s, i) => i % every === 0 && !s.human);
   const unverified = data.knowledge.filter((k) => k.status === 'unverified').length;
-  const recent = [...data.sessions].sort((a, b) => (a.started_at < b.started_at ? 1 : -1)).slice(0, 8);
+  const recent = [...hiring].sort((a, b) => (a.started_at < b.started_at ? 1 : -1)).slice(0, 8);
 
   const stats = [
     ['Total candidates', active.length], ['Mock calls completed', completed.length], ['Mock calls pending', pending.length], ['Average score', avg ?? '–'],

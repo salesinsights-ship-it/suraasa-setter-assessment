@@ -55,7 +55,7 @@ function People() {
 function Engine() {
   const { data, reload } = useAdmin();
   const c = data.config;
-  const [f, setF] = useState({ voice_engine: c.voice_engine || 'auto', teacher_models: (c.teacher_models || []).join('\n'), evaluator_models: (c.evaluator_models || []).join('\n'), retention_days: c.retention_days || 0, recruiters_edit_templates: !!c.recruiters_edit_templates, review_every: c.review_every || 5 });
+  const [f, setF] = useState({ voice_engine: c.voice_engine || 'auto', teacher_models: (c.teacher_models || []).join('\n'), evaluator_models: (c.evaluator_models || []).join('\n'), retention_days: c.retention_days || 0, recruiters_edit_templates: !!c.recruiters_edit_templates, review_every: c.review_every || 5, record_audio: !!c.record_audio });
   const [test, setTest] = useState(null);
   const [run, busy] = useAction();
   const save = async (e) => { e.preventDefault(); if (await run(() => rpc('saveConfig', { config: f }), 'Settings saved')) reload(); };
@@ -73,6 +73,7 @@ function Engine() {
           <Select value={f.voice_engine} onChange={(e) => setF({ ...f, voice_engine: e.target.value })} options={[['auto', 'Live voice (Gemini) when available, standard voice otherwise'], ['browser', 'Standard browser voice only']]} />
         </Field>
         <p className="tiny muted">Live voice sounds natural and replies instantly, and candidates can interrupt. On Google's free tier the audio may be used to improve Google's products, and the transcript reaches this site through the candidate's browser, so reports mark it "not verified". Standard voice is slower and robotic, but every line is signed by the server.</p>
+        <label className="row small" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={f.record_audio} onChange={(e) => setF({ ...f, record_audio: e.target.checked })} style={{ marginTop: 3 }} data-testid="record-audio" /><span><b>Record live voice calls.</b> The audio of both voices is saved to a private folder in your Google Drive ("Setter Assessment recordings") and can be played from the call's report. Callers are told before the call. Needs the latest Google Sheet script. Calls on the standard browser voice are not recorded.</span></label>
         <div className="row wrap"><Btn onClick={check} busy={busy}>Test the AI connection</Btn>{test && <span className="small muted">Your key can use {test.count} models.</span>}</div>
         {test?.live?.configured && <div className={'note small ' + (test.live.ok ? 'good' : 'bad')}>{test.live.ok ? `Live voice is ready. Google accepted the key and model ${test.live.model}.` : `Live voice is not working yet. ${test.live.error}`}</div>}
         {test?.all?.length > 0 && <details className="small"><summary>Show all models this key can use</summary><p className="muted" style={{ marginTop: 6, wordBreak: 'break-word' }}>{test.all.join(', ')}</p></details>}

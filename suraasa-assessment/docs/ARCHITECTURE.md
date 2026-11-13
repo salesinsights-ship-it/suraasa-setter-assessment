@@ -112,9 +112,13 @@ The 10 training teachers (`tr01` to `tr10`) and the 8-skill template (`t_trainin
 
 Google ends a live audio session at 15 minutes unless context window compression is on, and closes each connection after about 10 minutes with a GoAway warning first. `server/live.js` asks for compression (and retries without it if a model refuses the setting). On GoAway, `src/live.js` waits for the teacher to finish speaking, gets a new token with the conversation so far and a "carry on quietly" instruction, opens the new connection and closes the old one. This is not counted as a reconnection.
 
+### Call recording
+
+`src/live.js` mixes the microphone and the teacher's voice into one stream inside the browser's audio graph and compresses it with MediaRecorder (Opus, about 20 kbit/s). After the call, `src/recording.js` sends it in pieces of 360 KB through `putRecordingPart`, authorised by the call token, and `saveRecording` notes the piece count in the session's `tech` field. The Sheet script stores each piece as a file named `<call id>.<number>.part` in one private Drive folder; nothing is appended or joined on the server. Playback fetches the pieces through `getRecordingPart` (permission-checked like the report) and joins them in the browser. No Sheet column was added.
+
 ## What is not built
 
 - **Simultaneous two-way audio without a headset.** Browser speech recognition would hear the teacher's own voice. A paid voice provider with echo handling fixes this. It plugs into `src/voice.js`.
-- **Server-side audio recording.** Only the transcript is stored.
+- **Server-side audio recording.** Recording is done in the caller's browser (see above), so a caller with developer tools could interfere with it. Calls on the standard browser voice are not recorded.
 - **Single sign-on.** Access codes were chosen to match the existing trainer. Google sign-in can be added in `signIn`.
 - **Accounts for more than one company.** This is one Suraasa workspace.

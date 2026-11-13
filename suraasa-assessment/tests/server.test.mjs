@@ -688,3 +688,87 @@ test('Live voice: a call with no speech-confidence figure is not flagged as a te
   const sess = home.sessions.find((x) => x.id === start.session_id);
   assert.deepEqual([sess.tech.avg_confidence, sess.flags.tech, sess.flags.unverified], [null, false, true]);
 });
+
+/* ------------------------------------------------------------ call recordings */
+
+const liveItems = () => [{ r: 't', x: 'Hello?', t: 0 }, ...PRACTICE_LINES.flatMap((x, i) => [{ r: 'c', x, t: 1000 + i * 9000 }, { r: 't', x: 'Hmm, go on.', t: 5000 + i * 9000 }])];
+const AUDIO = [Buffer.from('first piece of sound '.repeat(40)).toString('base64'), Buffer.from('second piece').toString('base64')];
+
+/** Plays a recorded live call to the end and stores its two-piece recording. */
+async function recordedCall(w, token, assignmentId, personaId) {
+  const start = await w.rpc('startCall', { assignment_id: assignmentId, persona_id: personaId, mode: 'live' }, token);
+  w.clock.t += 90000;
+  const done = await w.rpc('endCall', { callToken: start.callToken, items: liveItems(), chain: '', meta: {}, reason: 'candidate' }, token);
+  const puts = [];
+  for (let n = 0; n < AUDIO.length; n++) puts.push(await w.rpc('putRecordingPart', { callToken: start.callToken, n, data: AUDIO[n] }, token));
+  const saved = await w.rpc('saveRecording', { callToken: start.callToken, parts: AUDIO.length, mime: 'audio/webm;codecs=opus', bytes: 852 }, token);
+  return { start, done, puts, saved, session_id: start.session_id };
+}
+
+test('Recording: off by default; switching it on needs the newer Sheet script', async () => {
+  const { w, admin, candidate, assignmentId } = await ready();
+  w.enableLive();
+  assert.equal((await w.rpc('myHome', {}, candidate)).record, false);
+  const start = await w.rpc('startCall', { assignment_id: assignmentId, mode: 'live' }, candidate);
+  assert.equal(start.record, false);
+  assert.equal((await w.raw('putRecordingPart', { callToken: start.callToken, n: 0, data: AUDIO[0] }, candidate)).status, 409);
+  const real = w.deps.store.filesReady;
+  w.deps.store.filesReady = async () => false; // an older Sheet script
+  const refused = await w.raw('saveConfig', { config: { record_audio: true } }, admin);
+  assert.equal(refused.status, 409);
+  assert.match(refused.json.error, /latest Google Sheet script/);
+  w.deps.store.filesReady = real;
+  assert.ok((await w.rpc('saveConfig', { config: { record_audio: true } }, admin)).ok);
+  assert.equal((await w.rpc('myHome', {}, candidate)).record, true);
+});
+
+test('Recording: pieces are stored in Drive, played back exactly, and only the right people can listen', async () => {
+  const { w, admin, recruiter, candidate, assignmentId, intern, practiceId, internId } = await practiceReady();
+  w.enableLive();
+  await w.rpc('saveConfig', { config: { record_audio: true } }, admin);
+  // an intern's practice call
+  const call = await recordedCall(w, intern, practiceId, 'tr05');
+  assert.equal(call.start.record, true);
+  assert.ok(call.puts.every((r) => r.ok) && call.saved.ok, JSON.stringify(call.saved));
+  const folder = [...w.gas.folders.values()].find((f) => f.getId().includes('recordings'));
+  assert.deepEqual(folder.files.map((f) => f.name), [`${call.session_id}.000.part`, `${call.session_id}.001.part`]);
+  const staff = await w.rpc('getSession', { session_id: call.session_id }, recruiter);
+  assert.deepEqual(staff.session.tech.recording, { parts: 2, mime: 'audio/webm', bytes: 852 });
+  for (let n = 0; n < 2; n++) assert.equal((await w.rpc('getRecordingPart', { session_id: call.session_id, n }, recruiter)).data, AUDIO[n]);
+  assert.equal((await w.raw('getRecordingPart', { session_id: call.session_id, n: 2 }, recruiter)).status, 404);
+  const mine = await w.rpc('getSession', { session_id: call.session_id }, intern);
+  assert.equal(mine.session.recording.parts, 2, 'an intern can listen to their own practice call');
+  assert.equal((await w.rpc('getRecordingPart', { session_id: call.session_id, n: 0 }, intern)).data, AUDIO[0]);
+  assert.equal((await w.raw('getRecordingPart', { session_id: call.session_id, n: 0 }, candidate)).status, 403, 'nobody else\'s call');
+  // a hiring candidate's call is recorded for recruiters only
+  const hire = await recordedCall(w, candidate, assignmentId);
+  assert.ok(hire.saved.ok);
+  assert.equal((await w.rpc('getSession', { session_id: hire.session_id }, candidate)).session.recording, null);
+  assert.equal((await w.raw('getRecordingPart', { session_id: hire.session_id, n: 0 }, candidate)).status, 403);
+  assert.equal((await w.rpc('getRecordingPart', { session_id: hire.session_id, n: 0 }, recruiter)).data, AUDIO[0]);
+  // junk is refused, and scoring afterwards keeps the recording details
+  assert.equal((await w.raw('putRecordingPart', { callToken: call.start.callToken, n: 0, data: '<script>' }, intern)).status, 400);
+  assert.equal((await w.raw('putRecordingPart', { callToken: call.start.callToken, n: 99, data: AUDIO[0] }, intern)).status, 400);
+  assert.equal((await w.rpc('score', { session_id: call.session_id }, intern)).status, 'scored');
+  assert.equal((await w.rpc('getSession', { session_id: call.session_id }, recruiter)).session.tech.recording.parts, 2);
+  // deleting the person bins their recordings
+  await w.rpc('deleteCandidate', { id: internId, reason: 'left the programme' }, admin);
+  assert.ok(folder.files.filter((f) => f.name.startsWith(call.session_id)).every((f) => f.trashed));
+  assert.ok(folder.files.filter((f) => f.name.startsWith(hire.session_id)).every((f) => !f.trashed));
+});
+
+test('Recording: the daily clean-up bins recordings along with old transcripts', async () => {
+  const { w, admin, candidate, assignmentId } = await ready();
+  w.enableLive();
+  await w.rpc('saveConfig', { config: { record_audio: true, retention_days: 30 } }, admin);
+  const call = await recordedCall(w, candidate, assignmentId);
+  const folder = [...w.gas.folders.values()].find((f) => f.getId().includes('recordings'));
+  assert.equal(w.gas.run('applyRetention_'), 0, 'a fresh call is kept');
+  const sheet = w.gas.sheets.get('Sessions');
+  const head = sheet.cells[0];
+  const row = sheet.cells.find((r) => r[0] === call.session_id);
+  row[head.indexOf('ended_at')] = '2020-01-01T00:00:00.000Z';
+  assert.equal(w.gas.run('applyRetention_'), 1);
+  assert.ok(folder.files.every((f) => f.trashed));
+  assert.equal((await w.raw('getRecordingPart', { session_id: call.session_id, n: 0 }, admin)).status, 404);
+});

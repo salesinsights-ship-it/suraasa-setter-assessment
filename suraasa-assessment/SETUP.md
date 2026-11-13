@@ -126,8 +126,32 @@ Things to know:
 - **Live voice needs `GEMINI_API_KEY`.** Without it, practice calls use the browser's own voice, which takes turns and sounds robotic.
 - **Long calls.** Google renews a live connection about every 10 minutes. The site opens a new line with the conversation so far, and the teacher carries on without mentioning it. There can be a pause of a second or two at that moment.
 - **Free limits.** Google does not publish the free limit for live voice. If it is reached, the call falls back to the browser voice. Twenty-minute calls use the free allowance faster than eight-minute ones, so start with a few interns and watch for fallbacks.
-- **No audio recording.** The transcript is stored. The audio is not, because the free setup has nowhere to keep it.
+- **Audio recording is optional.** See "Call recording" below. It is off until you switch it on.
 - **Verify the product facts first** (Assessments > Product facts). Until then, reports cannot say whether what an intern said about Suraasa was correct.
+
+### The Training page
+
+**Training** in the menu shows every intern with practice access: scored calls, average, best and latest score, whether they are improving (the last three calls against the three before), their weakest skill, and their latest training recommendation. It also shows the skills the whole team is weakest on, and lists interns who have not practised this week, are not improving, or have a call waiting to be scored. "Ready" needs the top band on an intern's last two scored calls. Practice calls are kept out of the hiring Dashboard and Leaderboard.
+
+## Call recording (optional, free)
+
+Live voice calls can be recorded. Both voices are recorded in the caller's browser, sent to the site after the call, and kept in a private folder in your Google Drive called `Setter Assessment recordings`. A 15-minute call is about 2 MB.
+
+To switch it on:
+
+1. Open the Google Sheet, then **Extensions > Apps Script**. Replace everything with the new `apps-script/Code.gs` and save.
+2. Click **Deploy > Manage deployments**, the pencil, **Version: New version**, **Deploy**. Do not use **New deployment**, because that changes the link.
+3. In the site, open **Settings > AI, data and permissions**, tick **Record live voice calls**, and save. If the script was not updated, the site says so and leaves recording off.
+
+How it behaves:
+
+- **Callers are told.** The consent line before the call says the audio is recorded.
+- **Who can listen.** Recruiters and admins, from the call's report, for the candidates they can already see. An intern can listen to their own practice calls. A hiring candidate cannot listen to theirs.
+- **Only live voice calls.** Calls on the standard browser voice are not recorded, because the browser does not expose that voice.
+- **The call always comes first.** The transcript is saved before the recording is sent. If the recording fails, the call is still scored.
+- **Deletion.** Deleting a candidate, or the data retention setting, moves their recordings to the Drive bin. Drive empties its bin after 30 days.
+- **Storage.** Recordings count against the Drive storage of the account that owns the Sheet. At 2 MB a call, 1,000 calls is about 2 GB.
+- **A reload loses the first part.** If the caller reloads the page mid-call, the recording covers only what came after.
 
 ## Limits of the free setup
 

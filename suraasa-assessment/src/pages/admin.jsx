@@ -26,9 +26,15 @@ export function AdminProvider({ children }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-/** The session that represents a candidate on the leaderboard: their latest scored call that still counts. */
+/** True for an intern's practice call. Practice calls belong on the Training page, never in hiring figures. */
+export function isPractice(session, assignments) {
+  if (session.flags?.practice) return true;
+  return !!assignments && assignments.some((a) => a.id === session.assignment_id && a.persona_mode === 'practice');
+}
+
+/** The session that represents a candidate on the leaderboard: their latest scored hiring call that still counts. */
 export function latestScored(sessions, candidateId) {
-  return sessions.filter((s) => s.candidate_id === candidateId && s.status === 'scored' && !s.voided).sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0] || null;
+  return sessions.filter((s) => s.candidate_id === candidateId && s.status === 'scored' && !s.voided && !s.flags?.practice).sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0] || null;
 }
 
 export function latestDecision(decisions, candidateId) {
@@ -38,7 +44,7 @@ export function latestDecision(decisions, candidateId) {
 /** Candidates whose most recent call cannot be relied on: too short, dropped, set aside, unscored or technically flagged. */
 export function needsReassessment(data) {
   return data.candidates.filter((c) => c.status === 'active').filter((c) => {
-    const mine = data.sessions.filter((s) => s.candidate_id === c.id).sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
+    const mine = data.sessions.filter((s) => s.candidate_id === c.id && !isPractice(s, data.assignments)).sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
     const last = mine[0];
     if (!last) return false;
     return last.voided || ['incomplete', 'abandoned', 'ended'].includes(last.status) || (last.status === 'scored' && last.flags?.tech);

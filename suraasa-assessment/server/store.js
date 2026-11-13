@@ -116,5 +116,12 @@ export function makeStore({ url, secret, fetchImpl = fetch, ttlMs = 15000, now =
 
   async function ping() { return call({ action: 'ping' }); }
 
-  return { read, write, getBlob, ping, _cache: cache };
+  /* Call recordings: small binary files in a private Drive folder, sent and fetched as base64 text. */
+  /** False when the Sheet script is an older version that cannot store files yet. */
+  async function filesReady() { try { return !!(await call({ action: 'files' })).files; } catch { return false; } }
+  async function putFile(name, data, mime) { await call({ action: 'putFile', name, data, mime }); }
+  async function getFile(name) { return (await call({ action: 'getFile', name })).data || null; }
+  async function removeFiles(prefix) { try { return (await call({ action: 'removeFiles', prefix })).removed || 0; } catch { return 0; } }
+
+  return { read, write, getBlob, ping, filesReady, putFile, getFile, removeFiles, _cache: cache };
 }

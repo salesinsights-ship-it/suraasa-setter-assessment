@@ -11,6 +11,7 @@ import { AdminProvider, useAdmin } from './pages/admin.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Candidates, { CandidateDetail, Compare } from './pages/Candidates.jsx';
 import Leaderboard from './pages/Leaderboard.jsx';
+import Training from './pages/Training.jsx';
 import SessionPage from './pages/SessionPage.jsx';
 import Teachers from './pages/Teachers.jsx';
 import Assessments from './pages/Assessments.jsx';
@@ -34,7 +35,7 @@ function CandidateApp({ user, signOut }) {
 }
 
 const NAV = [
-  ['', 'Dashboard', 'home'], ['candidates', 'Candidates', 'users'], ['leaderboard', 'Leaderboard', 'trophy'],
+  ['', 'Dashboard', 'home'], ['candidates', 'Candidates', 'users'], ['leaderboard', 'Leaderboard', 'trophy'], ['training', 'Training', 'mic'],
   ['teachers', 'Teachers', 'teacher'], ['assessments', 'Assessments', 'sliders'], ['settings', 'Settings', 'cog'],
 ];
 
@@ -51,6 +52,7 @@ function Page({ route }) {
     case 'candidates': return route[1] ? <CandidateDetail id={route[1]} /> : <Candidates />;
     case 'compare': return <Compare ids={(route[1] || '').split(',').filter(Boolean)} />;
     case 'leaderboard': return <Leaderboard />;
+    case 'training': return <Training />;
     case 'session': return <SessionPage id={route[1]} />;
     case 'teachers': return <Teachers />;
     case 'assessments': return <Assessments />;

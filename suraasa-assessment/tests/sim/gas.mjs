@@ -76,6 +76,9 @@ export function makeGas() {
       getUuid: () => crypto.randomUUID(),
       computeDigest: (_a, text) => [...crypto.createHash('sha256').update(String(text), 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
       formatDate: (d) => d.toISOString().slice(0, 16).replace('T', ' ').replace(':', ''),
+      base64Decode: (s) => [...Buffer.from(String(s), 'base64')],
+      base64Encode: (bytes) => Buffer.from(bytes).toString('base64'),
+      newBlob: (bytes, mime, name) => ({ bytes, mime, name }),
     },
     ScriptApp: {
       getProjectTriggers: () => triggers.slice(),
@@ -83,7 +86,17 @@ export function makeGas() {
       newTrigger: (fn) => { const b = { timeBased: () => b, everyDays: () => b, atHour: () => b, create: () => { triggers.push({ getHandlerFunction: () => fn }); } }; return b; },
     },
     DriveApp: {
-      createFolder: (name) => { const files = []; const f = { getId: () => 'folder-' + name, getFiles: () => { let i = 0; return { hasNext: () => i < files.length, next: () => files[i++] }; }, files }; folders.set(f.getId(), f); return f; },
+      createFolder: (name) => {
+        const files = [];
+        const iter = (list) => { let i = 0; return { hasNext: () => i < list.length, next: () => list[i++] }; };
+        const f = {
+          getId: () => 'folder-' + name, files,
+          getFiles: () => iter(files.filter((x) => !x.trashed || !x.blob)),
+          getFilesByName: (n) => iter(files.filter((x) => x.blob && !x.trashed && x.name === n)),
+          createFile: (blob) => { const file = { name: blob.name, blob, trashed: false, getName: () => blob.name, getBlob: () => ({ getBytes: () => blob.bytes }), getDateCreated: () => new Date(), setTrashed(v) { this.trashed = v; } }; files.push(file); return file; },
+        };
+        folders.set(f.getId(), f); return f;
+      },
       getFolderById: (id) => { if (!folders.has(id)) throw new Error('no folder'); return folders.get(id); },
       getFileById: () => ({ makeCopy: (name, folder) => { const t = Date.now() + folder.files.length; folder.files.push({ name, trashed: false, getDateCreated: () => new Date(t), setTrashed(v) { this.trashed = v; } }); } }),
     },

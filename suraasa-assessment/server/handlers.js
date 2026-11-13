@@ -8,6 +8,8 @@ import { LIVE_WS, LIVE_VOICES } from './live.js';
 import { buildReport, reportForCandidate, validateTemplate, RECOMMENDATIONS } from './rubric.js';
 
 const HOUR = 3600000;
+const REC_MIMES = ['audio/webm', 'audio/ogg', 'audio/mp4'];
+const recName = (sid, n) => `${sid}.${String(n).padStart(3, '0')}.part`;
 const STAFF = ['super_admin', 'recruiter'];
 const iso = (ms) => new Date(ms).toISOString();
 const s = (v, max = 200) => String(v ?? '').replace(/[\u0000-\u0008\u000b-\u001f]/g, '').trim().slice(0, max);
@@ -174,7 +176,9 @@ export async function handle(body, deps) {
         if (seen.has(x.assignment_id) && tpl?.data?.show_previous === false) { x.total = null; x.category = null; x.feedback = false; }
         seen.add(x.assignment_id);
       }
-      return { ok: true, candidate: { id: me.id, code: me.code, name: me.name, role_applied: me.role_applied }, assignments, sessions, live: !!deps.live && configOf(d.Config).voice_engine !== 'browser' };
+      const cfg = configOf(d.Config);
+      const liveOn = !!deps.live && cfg.voice_engine !== 'browser';
+      return { ok: true, candidate: { id: me.id, code: me.code, name: me.name, role_applied: me.role_applied }, assignments, sessions, live: liveOn, record: liveOn && !!cfg.record_audio };
     }
 
     case 'startCall': {
@@ -214,6 +218,7 @@ export async function handle(body, deps) {
         ok: true, session_id: sid, callToken, persona: publicPersona(persona), items: [first], chain: chainOf(secret, sid, [first]),
         duration_sec: durSec, min_turns: tpl.data.min_turns, interrupt_after_sec: persona.interrupt_after_sec || 0, started_at: now, mode,
         hangup_after: persona.do_not_call ? 3 : 4,
+        record: mode === 'live' && !!configOf(d.Config).record_audio,
       };
     }
 
@@ -270,6 +275,49 @@ export async function handle(body, deps) {
         voice: LIVE_VOICES[persona.gender] || LIVE_VOICES.female, ttlSec: remaining + 180, modelIndex: int(body.model_index, 0, 9, 0),
       });
       return { ok: true, token: out.token, model: out.model, model_index: out.modelIndex, url: LIVE_WS };
+    }
+
+    case 'putRecordingPart': {
+      // One piece of the call audio, sent by the caller's browser after the call. The call token proves whose call it is.
+      const call = readToken(secret, 'call', body.callToken, now);
+      if (!call || call.uid !== user.id) throw new AppError('call_expired', 'This call has expired.', 410);
+      if (call.mode !== 'live') throw new AppError('invalid', 'Only live voice calls are recorded.', 400);
+      const d = await store.read(['Config']);
+      if (!configOf(d.Config).record_audio) throw new AppError('recording_off', 'Call recording is switched off.', 409);
+      const n = Math.round(Number(body.n));
+      const data = typeof body.data === 'string' ? body.data : '';
+      if (!(n >= 0 && n < 60) || data.length < 4 || data.length > 520000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) throw new AppError('invalid', 'That piece of the recording could not be read.', 400);
+      await store.putFile(recName(call.sid, n), data, 'application/octet-stream');
+      return { ok: true };
+    }
+
+    case 'saveRecording': {
+      const call = readToken(secret, 'call', body.callToken, now);
+      if (!call || call.uid !== user.id) throw new AppError('call_expired', 'This call has expired.', 410);
+      const d = await store.read(['Sessions'], { fresh: true });
+      const session = d.Sessions.find((x) => x.id === call.sid);
+      if (!session || session.status === 'in_progress') throw new AppError('invalid', 'The call must be saved before its recording.', 409);
+      const mime = REC_MIMES.find((m) => String(body.mime || '').toLowerCase().startsWith(m));
+      const parts = int(body.parts, 1, 60, 0);
+      if (!mime || !parts) throw new AppError('invalid', 'The recording details were not understood.', 400);
+      await store.write([
+        { op: 'update', tab: 'Sessions', id: session.id, patch: { tech: { ...(session.tech || {}), recording: { parts, mime, bytes: int(body.bytes, 0, 60 * 400000, 0) } } } },
+        log('call.recording', session.id, `${parts} parts`),
+      ]);
+      return { ok: true };
+    }
+
+    case 'getRecordingPart': {
+      const { session, own } = await sessionFor(s(body.session_id, 40));
+      // An intern may listen to their own practice calls. A hiring candidate never gets the recording.
+      if (own && !session.flags?.practice) throw new AppError('forbidden', 'You do not have access to that recording.', 403);
+      const rec = session.tech?.recording;
+      const n = Math.round(Number(body.n));
+      if (!rec || session.purged || !(n >= 0 && n < rec.parts)) throw new AppError('not_found', 'There is no recording for this call.', 404);
+      const data = await store.getFile(recName(session.id, n));
+      if (!data) throw new AppError('not_found', 'Part of this recording is missing from Google Drive.', 404);
+      if (n === 0 && !own) await store.write([log('recording.listen', session.id, '')]).catch(() => {});
+      return { ok: true, data, mime: rec.mime, parts: rec.parts };
     }
 
     case 'endCall': {
@@ -377,7 +425,7 @@ export async function handle(body, deps) {
         const policy = session.voided ? 'none' : tpl?.data?.candidate_feedback || 'none';
         return {
           ok: true, view: 'candidate',
-          session: { id: session.id, status: session.status, started_at: session.started_at, duration_sec: session.duration_sec, voided: session.voided, candidate_turns: session.candidate_turns, min_turns: tpl?.data?.min_turns || 4 },
+          session: { id: session.id, status: session.status, started_at: session.started_at, duration_sec: session.duration_sec, voided: session.voided, candidate_turns: session.candidate_turns, min_turns: tpl?.data?.min_turns || 4, recording: session.flags?.practice && !session.purged ? session.tech?.recording || null : null },
           persona: persona ? publicPersona(persona) : null,
           report: reportForCandidate(report, policy), policy,
         };
@@ -481,6 +529,7 @@ export async function handle(body, deps) {
         { op: 'remove', tab: 'Users', id: cand.user_id },
         log('candidate.delete', cand.code, `${sessions.length} calls removed. Reason: ${s(body.reason, 200)}`),
       ]);
+      for (const x of sessions) if (x.tech?.recording) await store.removeFiles(x.id); // recordings go to the Drive bin
       return { ok: true };
     }
 
@@ -734,7 +783,10 @@ export async function handle(body, deps) {
         teacher_models: models(c.teacher_models),
         evaluator_models: models(c.evaluator_models),
         voice_engine: c.voice_engine === 'browser' ? 'browser' : 'auto',
+        record_audio: !!c.record_audio,
       };
+      // Recording needs the newer Sheet script. Better to say so now than to lose recordings silently later.
+      if (next.record_audio && !configOf(d.Config).record_audio && !(await store.filesReady())) throw new AppError('recording_setup', 'Call recording needs the latest Google Sheet script. Paste the new apps-script/Code.gs into Apps Script, deploy it as a new version, then switch this on again.', 409);
       const ops = Object.entries(next).map(([id, value]) => (d.Config.some((r) => r.id === id)
         ? { op: 'update', tab: 'Config', id, patch: { value, updated_at: iso(now), updated_by: user.id } }
         : { op: 'append', tab: 'Config', row: { id, value, updated_at: iso(now), updated_by: user.id } }));
