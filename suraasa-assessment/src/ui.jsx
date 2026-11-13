@@ -58,6 +58,33 @@ export const Input = (p) => <input className="input" {...p} />;
 export const Area = (p) => <textarea className="input" {...p} />;
 export const Select = ({ options, ...p }) => <select className="input" {...p}>{options.map((o) => (Array.isArray(o) ? <option key={o[0]} value={o[0]}>{o[1]}</option> : <option key={o} value={o}>{o}</option>))}</select>;
 export const Loading = ({ text = 'Loading' }) => <div className="loading"><span className="spin" /><span>{text}</span></div>;
+/** A grey outline of a page (title, summary cards, table rows) shown while its data is on the way. */
+export const Skeleton = ({ label = 'Loading' }) => (
+  <div role="status" aria-label={label} data-testid="skeleton">
+    <div className="skel" style={{ height: 28, width: 220, marginBottom: 10 }} />
+    <div className="skel" style={{ height: 14, width: 320, maxWidth: '80%', marginBottom: 22 }} />
+    <div className="grid g4 keep2">{[0, 1, 2, 3].map((i) => <div key={i} className="skel" style={{ height: 76 }} />)}</div>
+    <div className="col" style={{ marginTop: 24, gap: 8 }}>{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="skel" style={{ height: 40 }} />)}</div>
+  </div>
+);
+
+/** Splits a long list into pages so a table with hundreds of rows stays quick to draw and easy to scan. */
+export function usePager(rows, size = 25) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(rows.length / size));
+  const at = Math.min(page, pages - 1);
+  return { rows: rows.slice(at * size, at * size + size), page: at, pages, setPage, total: rows.length, size };
+}
+export function Pager({ p, noun = 'rows' }) {
+  if (p.total <= p.size) return null;
+  return (
+    <div className="pager no-print" data-testid="pager">
+      <span>{p.page * p.size + 1} to {Math.min(p.total, (p.page + 1) * p.size)} of {p.total} {noun}</span>
+      <span className="row gap-s"><button className="btn sm" disabled={p.page === 0} onClick={() => p.setPage(p.page - 1)}>Previous</button><button className="btn sm" disabled={p.page >= p.pages - 1} onClick={() => p.setPage(p.page + 1)}>Next</button></span>
+    </div>
+  );
+}
+
 export const Empty = ({ title, children }) => <div className="empty"><h3>{title}</h3><p className="small mt">{children}</p></div>;
 export const Bar = ({ value, max = 100 }) => { const p = max ? (value / max) * 100 : 0; return <div className={'bar ' + pctTone(p)}><i style={{ width: Math.max(0, Math.min(100, p)) + '%' }} /></div>; };
 export const Avatar = ({ name, gender, size = '' }) => <div className={`avatar ${gender === 'male' ? 'm' : ''} ${size}`} aria-hidden="true">{initials(name)}</div>;
@@ -96,7 +123,7 @@ export function ScoreRing({ value, label = 'out of 100' }) {
   const color = p >= 75 ? 'var(--good)' : p >= 50 ? 'var(--blue)' : p >= 35 ? 'var(--amber)' : 'var(--bad)';
   return (
     <div className="ringscore">
-      <svg width="132" height="132" viewBox="0 0 132 132"><circle cx="66" cy="66" r={r} fill="none" stroke="#eaedf5" strokeWidth="10" /><circle cx="66" cy="66" r={r} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - p / 100)} /></svg>
+      <svg width="132" height="132" viewBox="0 0 132 132"><circle cx="66" cy="66" r={r} fill="none" stroke="#f1f5f9" strokeWidth="10" /><circle cx="66" cy="66" r={r} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - p / 100)} /></svg>
       <div><b className="num">{value ?? '–'}</b><span>{label}</span></div>
     </div>
   );

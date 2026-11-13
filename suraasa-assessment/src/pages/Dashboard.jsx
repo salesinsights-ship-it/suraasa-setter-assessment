@@ -33,7 +33,7 @@ export default function Dashboard() {
       {!data.status.ai && <div className="note bad" style={{ marginBottom: 16 }}>The AI is not connected, so calls cannot run. Add GROQ_API_KEY in Vercel and redeploy.</div>}
       {unverified > 0 && data.knowledge.every((k) => k.status !== 'verified') && <div className="note warn" style={{ marginBottom: 16 }}>No Suraasa product facts are verified yet, so reports cannot check whether a candidate's claims are accurate. <a href="#/assessments">Review the {unverified} draft facts</a>.</div>}
 
-      <div className="grid g4 keep2" data-testid="stats">
+      <div className="grid kpis" data-testid="stats">
         {stats.map(([label, value, sub]) => <div className="card stat" key={label}><b className="num">{value}</b><span>{label}</span>{sub && <div className="small muted">{sub}</div>}</div>)}
       </div>
 

@@ -339,7 +339,7 @@ export default function Call({ assignmentId, personaId }) {
         <h1>{p.name}</h1>
         <p className="sub">{p.subject}<br />{p.school_type}</p>
         <div className="timer" aria-label="Call time">{fmtDur(elapsed)}</div>
-        <div className="tiny" style={{ color: left <= 60 ? '#fbbf24' : '#8a97c6' }}>{left <= 60 ? `${left} seconds left` : `${Math.ceil(left / 60)} min left`}</div>
+        <div className="tiny" style={{ color: left <= 60 ? '#fcd34d' : '#a9b6cc' }}>{left <= 60 ? `${left} seconds left` : `${Math.ceil(left / 60)} min left`}</div>
         <div className="state" role="status" aria-live="polite">{STATE_TEXT[state]}</div>
         {call.mode !== 'typed' && <div className="meter" aria-hidden="true">{bars.map((h, i) => <i key={i} style={{ height: state === 'listening' ? h : 4 }} />)}</div>}
         <div className="heard">{notice || (heard ? `"${heard.length > 110 ? '…' + heard.slice(-110) : heard}"` : '')}</div>

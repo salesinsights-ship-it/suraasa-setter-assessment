@@ -63,8 +63,51 @@ export function attemptState(assignment, sessions, now) {
   return { used, left, starts, blocked, allowed };
 }
 
+/**
+ * Every tab an action needs, so they can all be fetched in ONE request to the Google Sheet instead of two to six.
+ * Each request to the Sheet takes about a second, so this is where most waiting on a page comes from.
+ */
+const PRELOAD = {
+  adminHome: ['Candidates', 'Assignments', 'Sessions', 'Personas', 'Templates', 'Knowledge', 'Decisions', 'Config'],
+  myHome: ['Candidates', 'Assignments', 'Sessions', 'Personas', 'Templates', 'Config'],
+  startCall: ['Candidates', 'Assignments', 'Sessions', 'Personas', 'Templates', 'Config'],
+  endCall: ['Sessions', 'Templates'],
+  score: ['Sessions', 'Candidates', 'Personas', 'Templates', 'Knowledge', 'Config'],
+  getSession: ['Sessions', 'Candidates', 'Personas', 'Templates', 'Decisions'],
+  getRecordingPart: ['Sessions', 'Candidates'],
+  saveRecording: ['Sessions'],
+  saveCandidate: ['Candidates'], setCandidateStatus: ['Candidates'], deleteCandidate: ['Candidates', 'Sessions'], resetCode: ['Candidates'],
+  saveAssignment: ['Candidates', 'Templates', 'Personas', 'Assignments'], cancelAssignment: ['Candidates', 'Assignments'],
+  decide: ['Sessions', 'Candidates'], humanReview: ['Sessions', 'Candidates', 'Templates'], voidSession: ['Sessions', 'Candidates'],
+  savePersona: ['Personas'], saveTemplate: ['Templates', 'Config'], saveKnowledge: ['Knowledge'], saveConfig: ['Config'], installTraining: ['Personas', 'Templates'],
+  audit: ['AuditLog'],
+};
+// During a call the teacher and settings cannot change in a way that matters, so replies never wait on the Sheet for them.
+const IN_CALL = { turn: ['Personas', 'Config'], liveToken: ['Personas'], putRecordingPart: ['Config'] };
+
+/**
+ * The store as seen by one request. A tab already fetched fresh in this request is not fetched again, and a write
+ * to a tab forgets it, so nothing stale is ever used after a change.
+ */
+function requestStore(store) {
+  const seen = new Map();
+  return {
+    ...store,
+    async read(tabs, opts = {}) {
+      const need = tabs.filter((t) => !seen.has(t) || (opts.fresh && !seen.get(t).fresh));
+      if (need.length) {
+        const d = await store.read(need, opts);
+        for (const t of need) seen.set(t, { rows: d[t], fresh: !!opts.fresh });
+      }
+      return Object.fromEntries(tabs.map((t) => [t, seen.get(t).rows]));
+    },
+    async write(ops) { for (const o of ops) seen.delete(o.tab); return store.write(ops); },
+  };
+}
+
 export async function handle(body, deps) {
-  const { store, llm, secret } = deps;
+  const { llm, secret } = deps;
+  const store = requestStore(deps.store);
   const now = deps.now ? deps.now() : Date.now();
   const action = String(body?.action || '');
 
@@ -102,6 +145,9 @@ export async function handle(body, deps) {
 
   const claim = readToken(secret, 'session', body.token, now);
   if (!claim) throw new AppError('signed_out', 'Please sign in again.', 401);
+  // One request to the Sheet brings the sign-in check and everything this action will read.
+  if (PRELOAD[action]) await store.read(['Users', ...PRELOAD[action]], { fresh: true });
+  else if (IN_CALL[action]) await store.read(['Users', ...IN_CALL[action]], { maxAgeMs: 120000 });
   const { Users } = await store.read(['Users']);
   const user = Users.find((u) => u.id === claim.uid && u.active);
   if (!user || user.role !== claim.role) throw new AppError('signed_out', 'Please sign in again.', 401);
@@ -420,7 +466,13 @@ export async function handle(body, deps) {
       const d = await store.read(['Personas', 'Templates', 'Decisions', 'Users']);
       const tpl = d.Templates.find((t) => t.id === session.template_id);
       const persona = d.Personas.map(flat).find((q) => q.id === session.persona_id);
-      const report = session.status === 'scored' && !session.purged ? await store.getBlob('Reports', session.id) : null;
+      // The report, the transcript and the audit note are independent, so they are fetched together, not one after another.
+      const wantReport = session.status === 'scored' && !session.purged;
+      const [report, transcriptBlob] = await Promise.all([
+        wantReport ? store.getBlob('Reports', session.id) : null,
+        !own && !session.purged ? store.getBlob('Transcripts', session.id) : null,
+        own ? null : store.write([log('report.view', session.id, cand.code)]).catch(() => {}),
+      ]);
       if (own) {
         const policy = session.voided ? 'none' : tpl?.data?.candidate_feedback || 'none';
         return {
@@ -430,8 +482,7 @@ export async function handle(body, deps) {
           report: reportForCandidate(report, policy), policy,
         };
       }
-      const transcript = session.purged ? null : await store.getBlob('Transcripts', session.id);
-      await store.write([log('report.view', session.id, cand.code)]).catch(() => {});
+      const transcript = transcriptBlob;
       return {
         ok: true, view: 'staff', session, candidate: cand, persona: persona || null, template: tpl ? { id: tpl.id, name: tpl.name, version: tpl.version, data: tpl.data } : null,
         report, transcript: transcript?.items || null,

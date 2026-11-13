@@ -18,7 +18,7 @@ export default function Login({ onSignedIn }) {
   }
 
   return (
-    <div className="login">
+    <main className="login">
       <div className="art">
         <div className="brand" style={{ padding: 0 }}><i>S</i><div>Suraasa<small>Setter Assessment</small></div></div>
         <div>
@@ -26,11 +26,11 @@ export default function Login({ onSignedIn }) {
           <p>Speak with an AI teacher the way you would on a real pre-sales call. Your call is scored on what you actually say and do.</p>
           <div className="steps">
             <div><b>1</b><span>Sign in with the email and access code your recruiter sent you.</span></div>
-            <div><b>2</b><span>Take a 5 to 10 minute voice call with a teacher. Use Chrome or Edge on a computer, with a headset if you can.</span></div>
-            <div><b>3</b><span>Your call is scored out of 100 across ten skills, and a recruiter reviews it.</span></div>
+            <div><b>2</b><span>Take a voice call with a teacher. Use Chrome or Edge on a computer, with a headset if you can.</span></div>
+            <div><b>3</b><span>Your call is scored out of 100, skill by skill, with quotes from what you said.</span></div>
           </div>
         </div>
-        <div className="tiny" style={{ color: '#8f9bc2' }}>For Suraasa recruitment use. Calls are transcribed and stored for assessment.</div>
+        <div className="tiny muted">For Suraasa recruitment and training use. Calls are transcribed and stored for assessment.</div>
       </div>
       <div className="form">
         <div>
@@ -45,9 +45,9 @@ export default function Login({ onSignedIn }) {
             {error && <div className="note bad" role="alert">{error}</div>}
             <Btn kind="primary lg" type="submit" busy={busy}>Sign in</Btn>
           </form>
-          <p className="small muted mt">No code, or it is not working? Ask your recruiter to reset it.</p>
+          <p className="small muted mt">No code, or it is not working? Ask your recruiter or trainer to reset it.</p>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

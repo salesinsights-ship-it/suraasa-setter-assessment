@@ -1,21 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { getSession, setSession, rpc } from './api.js';
-import { ToastProvider, useHash, Icon, Loading, go } from './ui.jsx';
+import { ToastProvider, useHash, Icon, Loading, Skeleton, go } from './ui.jsx';
 import Login from './pages/Login.jsx';
-import CandidateHome from './pages/CandidateHome.jsx';
-import Call from './pages/Call.jsx';
-import Result from './pages/Result.jsx';
 import { AdminProvider, useAdmin } from './pages/admin.jsx';
-import Dashboard from './pages/Dashboard.jsx';
-import Candidates, { CandidateDetail, Compare } from './pages/Candidates.jsx';
-import Leaderboard from './pages/Leaderboard.jsx';
-import Training from './pages/Training.jsx';
-import SessionPage from './pages/SessionPage.jsx';
-import Teachers from './pages/Teachers.jsx';
-import Assessments from './pages/Assessments.jsx';
-import Settings from './pages/Settings.jsx';
+
+// Each part of the site is downloaded only when someone opens it. A candidate never downloads the recruiter
+// pages, and nobody downloads the call screen (voice, live audio, recording) until they start a call.
+const CandidateHome = lazy(() => import('./pages/CandidateHome.jsx'));
+const Call = lazy(() => import('./pages/Call.jsx'));
+const Result = lazy(() => import('./pages/Result.jsx'));
+const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
+const Candidates = lazy(() => import('./pages/Candidates.jsx'));
+const CandidateDetail = lazy(() => import('./pages/Candidates.jsx').then((m) => ({ default: m.CandidateDetail })));
+const Compare = lazy(() => import('./pages/Candidates.jsx').then((m) => ({ default: m.Compare })));
+const Leaderboard = lazy(() => import('./pages/Leaderboard.jsx'));
+const Training = lazy(() => import('./pages/Training.jsx'));
+const SessionPage = lazy(() => import('./pages/SessionPage.jsx'));
+const Teachers = lazy(() => import('./pages/Teachers.jsx'));
+const Assessments = lazy(() => import('./pages/Assessments.jsx'));
+const Settings = lazy(() => import('./pages/Settings.jsx'));
 
 const ROLE = { super_admin: 'Super Admin', recruiter: 'Recruiter', candidate: 'Candidate' };
 
@@ -25,11 +30,11 @@ function Brand() {
 
 function CandidateApp({ user, signOut }) {
   const route = useHash();
-  if (route[0] === 'call' && route[1]) return <Call assignmentId={route[1]} personaId={route[2] || ''} />;
+  if (route[0] === 'call' && route[1]) return <Suspense fallback={<Loading text="Getting the call ready" />}><Call assignmentId={route[1]} personaId={route[2] || ''} /></Suspense>;
   return (
     <>
-      <div className="topbar"><Brand /><span className="right small hide-m">{user.name}</span><button className="btn sm" onClick={signOut}>Sign out</button></div>
-      {route[0] === 'result' && route[1] ? <Result sessionId={route[1]} /> : <CandidateHome user={user} />}
+      <header className="topbar"><Brand /><span className="right small hide-m muted">{user.name}</span><button className="btn sm" onClick={signOut}>Sign out</button></header>
+      <main><Suspense fallback={<div className="page"><Skeleton /></div>}>{route[0] === 'result' && route[1] ? <Result sessionId={route[1]} /> : <CandidateHome user={user} />}</Suspense></main>
     </>
   );
 }
@@ -42,8 +47,8 @@ const NAV = [
 function StaffPages({ route }) {
   const { data, error, refreshing } = useAdmin();
   if (error && !data) return <div className="note bad">{error}</div>;
-  if (!data) return <Loading text="Loading your workspace" />;
-  return <>{refreshing && <div className="refreshing no-print" role="status"><span className="spin" style={{ width: 12, height: 12, borderWidth: 2 }} />Updating the list</div>}<Page route={route} /></>;
+  if (!data) return <Skeleton label="Loading your workspace" />;
+  return <>{refreshing && <div className="refreshing no-print" role="status"><span className="spin" style={{ width: 12, height: 12, borderWidth: 2 }} />Updating</div>}<Suspense fallback={<Skeleton />}><Page route={route} /></Suspense></>;
 }
 
 function Page({ route }) {
@@ -70,11 +75,11 @@ function StaffApp({ user, signOut }) {
       <div className="shell">
         <aside className="side no-print">
           <Brand />
-          {links}
-          <div className="who"><div style={{ color: '#fff', fontWeight: 700 }}>{user.name}</div><div>{ROLE[user.role]}</div><button className="btn sm mt" onClick={signOut}>Sign out</button></div>
+          <nav className="col" style={{ gap: 2 }} aria-label="Main">{links}</nav>
+          <div className="who"><b>{user.name}</b><div>{ROLE[user.role]}</div><button className="btn sm mt" onClick={signOut}>Sign out</button></div>
         </aside>
         <main className="main"><StaffPages route={route} /></main>
-        <nav className="bottomnav no-print">{links}</nav>
+        <nav className="bottomnav no-print" aria-label="Main, mobile">{links}</nav>
       </div>
     </AdminProvider>
   );

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { rpc } from '../api.js';
-import { Badge, Bar, Btn, CodeReveal, Empty, Field, Input, Area, Select, Modal, STATUS, LEVEL_NAMES, fmtDate, fmtDateTime, fmtDur, go, recTone, useAction } from '../ui.jsx';
+import { Badge, Bar, Btn, CodeReveal, Empty, Field, Input, Area, Pager, Select, Modal, STATUS, LEVEL_NAMES, fmtDate, fmtDateTime, fmtDur, go, recTone, useAction, usePager } from '../ui.jsx';
 import { useAdmin, latestScored, latestDecision } from './admin.jsx';
 
 function CandidateForm({ cand, onClose, onCode }) {
@@ -100,7 +100,13 @@ export default function Candidates() {
   const [show, setShow] = useState('active');
   const [form, setForm] = useState(false);
   const [code, setCode] = useState(null);
-  const rows = data.candidates.filter((c) => c.status === show && (c.name + c.email + c.code).toLowerCase().includes(q.toLowerCase())).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  // Typing in the search box stays instant: the list is filtered a moment later, and only one page of it is drawn.
+  const dq = useDeferredValue(q);
+  const all = useMemo(() => data.candidates.filter((c) => c.status === show && (c.name + c.email + c.code).toLowerCase().includes(dq.toLowerCase())).sort((a, b) => (a.created_at < b.created_at ? 1 : -1)), [data.candidates, show, dq]);
+  const pager = usePager(all, 25);
+  const { setPage } = pager;
+  useEffect(() => { setPage(0); }, [dq, show, setPage]);
+  const rows = pager.rows;
   return (
     <>
       <div className="head"><div><h1>Candidates</h1><p className="muted">{data.candidates.filter((c) => c.status === 'active').length} active</p></div><Btn kind="primary" onClick={() => setForm(true)} data-testid="add-candidate">Add a candidate</Btn></div>
@@ -125,6 +131,7 @@ export default function Candidates() {
             })}</tbody>
           </table>
         )}
+        <Pager p={pager} noun="candidates" />
       </div>
       {form && <CandidateForm onClose={() => setForm(false)} onCode={(c) => { setForm(false); setCode(c); }} />}
       {code && <CodeReveal {...code} onClose={() => setCode(null)} />}

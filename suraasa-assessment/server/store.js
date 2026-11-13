@@ -44,7 +44,7 @@ function encode(tab, row) {
   return out;
 }
 
-export function makeStore({ url, secret, fetchImpl = fetch, ttlMs = 15000, now = () => Date.now() }) {
+export function makeStore({ url, secret, fetchImpl = fetch, ttlMs = 15000, timeoutMs = 25000, now = () => Date.now() }) {
   const cache = new Map();
 
   async function call(body) {
@@ -56,6 +56,8 @@ export function makeStore({ url, secret, fetchImpl = fetch, ttlMs = 15000, now =
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ ...body, secret }),
         redirect: 'follow',
+        // A stuck Google request must not hold the page for a minute. The caller sees a plain "try again".
+        signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined,
       });
     } catch {
       throw new AppError('sheet_unreachable', 'The Google Sheet script did not answer. Try again in a moment.', 502);
@@ -71,13 +73,16 @@ export function makeStore({ url, secret, fetchImpl = fetch, ttlMs = 15000, now =
     return data;
   }
 
-  /** Read whole tabs. Uses a short cache so a call in progress never waits on the Sheet. */
-  async function read(tabs, { fresh = false } = {}) {
+  /**
+   * Read whole tabs, all in one request to the Sheet. Uses a short cache so a call in progress never waits on the Sheet.
+   * maxAgeMs lets a caller accept older copies, for data that cannot matter if it is a minute or two old.
+   */
+  async function read(tabs, { fresh = false, maxAgeMs = ttlMs } = {}) {
     const out = {};
     const missing = [];
     for (const tab of tabs) {
       const hit = cache.get(tab);
-      if (!fresh && hit && now() - hit.at < ttlMs) out[tab] = hit.rows;
+      if (!fresh && hit && now() - hit.at < maxAgeMs) out[tab] = hit.rows;
       else missing.push(tab);
     }
     if (missing.length) {

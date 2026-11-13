@@ -772,3 +772,14 @@ test('Recording: the daily clean-up bins recordings along with old transcripts',
   assert.ok(folder.files.every((f) => f.trashed));
   assert.equal((await w.raw('getRecordingPart', { session_id: call.session_id, n: 0 }, admin)).status, 404);
 });
+
+/* ------------------------------------------------------------ speed */
+
+test('Speed: each page needs one request to the Google Sheet, and replies during a call need none', async () => {
+  const { measure } = await import('./roundtrips.mjs');
+  const n = await measure();
+  assert.equal(n['Open the dashboard'], 1);
+  assert.equal(n['Candidate home page'], 1);
+  assert.equal(n['Each reply during a call (average)'], 0);
+  assert.ok(n['Start a call'] <= 2 && n['End a call'] <= 2 && n['Score a call'] <= 3, JSON.stringify(n));
+});
