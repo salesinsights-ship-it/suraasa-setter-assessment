@@ -97,6 +97,21 @@ Each teacher has its own facts, personality, style, pain points, objections, dec
 | Call runs over time | The teacher is told to wrap up; the server ends the call 90 seconds past the limit |
 | Speech engine never reports it has finished speaking | A timer moves the call on |
 
+## Intern training (practice mode)
+
+Practice is an assignment whose teacher mode is `practice`. It reuses every part of a hiring call, with four differences:
+
+- The intern chooses any teacher on the assignment's list. The `attempts` column holds the calls allowed per day, counted by India calendar day, so no Sheet column was added.
+- The call token carries a practice mark, which is saved in the session's `flags` when the call ends.
+- The evaluator is told the caller is an intern in training. The report carries `training` (Ready for live calls, Nearly ready, Needs more practice, Needs coaching) worked out from the same score bands and caps as the hiring recommendation.
+- The intern is sent that training recommendation, their product claims and any proven conduct concern. A hiring candidate is still never sent a recommendation.
+
+The 10 training teachers (`tr01` to `tr10`) and the 8-skill template (`t_training`) live in `server/seed.js` and are copied into the Sheet once by the `installTraining` action.
+
+### Calls longer than ten minutes
+
+Google ends a live audio session at 15 minutes unless context window compression is on, and closes each connection after about 10 minutes with a GoAway warning first. `server/live.js` asks for compression (and retries without it if a model refuses the setting). On GoAway, `src/live.js` waits for the teacher to finish speaking, gets a new token with the conversation so far and a "carry on quietly" instruction, opens the new connection and closes the old one. This is not counted as a reconnection.
+
 ## What is not built
 
 - **Simultaneous two-way audio without a headset.** Browser speech recognition would hear the teacher's own voice. A paid voice provider with echo handling fixes this. It plugs into `src/voice.js`.

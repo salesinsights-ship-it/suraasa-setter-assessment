@@ -10,7 +10,7 @@ export const LIVE_WS = 'wss://generativelanguage.googleapis.com/ws/google.ai.gen
 export const DEFAULT_LIVE_MODELS = ['gemini-3.8-live', 'gemini-3.1-flash-live-preview', 'gemini-2.5-flash-native-audio-preview-12-2025'];
 export const LIVE_VOICES = { female: 'Kore', male: 'Charon' };
 
-export function liveSetup({ model, system, voice }) {
+export function liveSetup({ model, system, voice, compress = true }) {
   return {
     model: 'models/' + model,
     generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
@@ -23,6 +23,8 @@ export function liveSetup({ model, system, voice }) {
     inputAudioTranscription: {},
     outputAudioTranscription: {},
     realtimeInputConfig: { automaticActivityDetection: { silenceDurationMs: 700 } },
+    // Without this Google ends an audio session at 15 minutes. With it, older turns are trimmed and the call can run on.
+    ...(compress ? { contextWindowCompression: { slidingWindow: {} } } : {}),
   };
 }
 
@@ -42,14 +44,16 @@ export function makeLive({ apiKey, fetchImpl = fetch, baseUrl = 'https://generat
   async function mint({ system, voice, ttlSec, modelIndex = 0 }) {
     const errors = [];
     for (let i = Math.max(0, modelIndex); i < models.length; i++) {
-      const setup = liveSetup({ model: models[i], system, voice });
       const times = { uses: 1, expireTime: new Date(now() + ttlSec * 1000).toISOString(), newSessionExpireTime: new Date(now() + 90000).toISOString() };
-      const { model, ...config } = setup;
       // Google documents two request shapes for the same thing. Both keep the settings on the server side.
-      const bodies = [
-        ['setup', { ...times, bidiGenerateContentSetup: setup }],
-        ['constraints', { ...times, liveConnectConstraints: { model, config } }],
-      ];
+      // Each is tried with long-call support first, then without it in case a model does not accept that setting.
+      const bodies = [];
+      for (const compress of [true, false]) {
+        const setup = liveSetup({ model: models[i], system, voice, compress });
+        const { model, ...config } = setup;
+        bodies.push(['setup' + (compress ? '' : '-short'), { ...times, bidiGenerateContentSetup: setup }]);
+        bodies.push(['constraints' + (compress ? '' : '-short'), { ...times, liveConnectConstraints: { model, config } }]);
+      }
       for (const [form, body] of bodies) {
         // eslint-disable-next-line no-await-in-loop
         const { res, data } = await post(body);

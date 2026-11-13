@@ -2,7 +2,7 @@ import {
   AppError, rand, hashCode, newCode, safeEqual, signToken, readToken, chainOf, chainAdd,
 } from './auth.js';
 import { LlmError, DEFAULT_MODELS } from './llm.js';
-import { SEED_PERSONAS, DEFAULT_TEMPLATE, SEED_KNOWLEDGE, DEFAULT_CONFIG } from './seed.js';
+import { SEED_PERSONAS, DEFAULT_TEMPLATE, SEED_KNOWLEDGE, DEFAULT_CONFIG, TRAINING_PERSONAS, TRAINING_TEMPLATE } from './seed.js';
 import { teacherMessages, teacherLiveSystem, cleanReply, evaluatorMessages, parseJson } from './prompts.js';
 import { LIVE_WS, LIVE_VOICES } from './live.js';
 import { buildReport, reportForCandidate, validateTemplate, RECOMMENDATIONS } from './rubric.js';
@@ -37,18 +37,28 @@ function modelsFor(cfg, tier) {
 }
 
 /** Attempts used, and whether another call may start. Voided, empty and dropped calls do not use an attempt. */
+/** The calendar day in India for a time, as YYYY-MM-DD. Practice limits reset at midnight IST. */
+const istDay = (ms) => new Date(ms + 5.5 * HOUR).toISOString().slice(0, 10);
+
+/**
+ * Attempts used, and whether another call may start. Voided, empty and dropped calls do not use an attempt.
+ * A practice assignment (intern training) has no total limit, only a number of calls per day.
+ */
 export function attemptState(assignment, sessions, now) {
-  const mine = sessions.filter((x) => x.assignment_id === assignment.id);
+  let mine = sessions.filter((x) => x.assignment_id === assignment.id);
+  const practice = assignment.persona_mode === 'practice';
+  const allowed = assignment.attempts; // for practice, this is the number of calls allowed per day
+  if (practice) { const today = istDay(now); mine = mine.filter((x) => istDay(Date.parse(x.started_at)) === today); }
   const used = mine.filter((x) => !x.voided && ['ended', 'scored'].includes(x.status)).length;
   const starts = mine.filter((x) => !x.voided).length;
-  const left = Math.max(0, assignment.attempts - used);
+  const left = Math.max(0, allowed - used);
   const expired = assignment.due && Date.parse(assignment.due + 'T23:59:59+05:30') < now;
   let blocked = null;
-  if (assignment.status !== 'open') blocked = 'This assessment is closed.';
-  else if (expired) blocked = 'The last date for this assessment has passed. Contact your recruiter.';
-  else if (left <= 0) blocked = 'You have used all your attempts.';
-  else if (starts >= assignment.attempts + 2) blocked = 'This call has been started too many times without finishing. Contact your recruiter.';
-  return { used, left, starts, blocked };
+  if (assignment.status !== 'open') blocked = practice ? 'Your practice access is closed.' : 'This assessment is closed.';
+  else if (expired) blocked = practice ? 'Your practice period has ended. Contact your trainer.' : 'The last date for this assessment has passed. Contact your recruiter.';
+  else if (left <= 0) blocked = practice ? 'You have used all your practice calls for today. Come back tomorrow.' : 'You have used all your attempts.';
+  else if (starts >= allowed + (practice ? 4 : 2)) blocked = practice ? 'Too many calls were started today without finishing. Try again tomorrow, or contact your trainer.' : 'This call has been started too many times without finishing. Contact your recruiter.';
+  return { used, left, starts, blocked, allowed };
 }
 
 export async function handle(body, deps) {
@@ -138,7 +148,7 @@ export async function handle(body, deps) {
         const st = attemptState(a, mySessions, now);
         const ids = a.persona_ids || [];
         return {
-          id: a.id, status: a.status, due: a.due, duration_min: a.duration_min, attempts: a.attempts, allow_typed: a.allow_typed,
+          id: a.id, status: a.status, due: a.due, duration_min: a.duration_min, attempts: a.attempts, allow_typed: a.allow_typed, practice: a.persona_mode === 'practice',
           persona_mode: a.persona_mode, used: st.used, left: st.left, blocked: st.blocked,
           min_turns: tpl?.data?.min_turns || 4,
           // A randomly assigned teacher stays hidden until the phone is answered.
@@ -151,7 +161,8 @@ export async function handle(body, deps) {
         const policy = tpl?.data?.candidate_feedback || 'none';
         const show = policy !== 'none' && x.status === 'scored' && !x.voided;
         return {
-          id: x.id, assignment_id: a?.id, started_at: x.started_at, duration_sec: x.duration_sec, status: x.status, voided: x.voided,
+          id: x.id, assignment_id: a?.id, started_at: x.started_at, duration_sec: x.duration_sec, status: x.status, voided: x.voided, practice: a?.persona_mode === 'practice',
+          scores: show && a?.persona_mode === 'practice' ? x.scores || null : null,
           persona_name: personas.find((q) => q.id === x.persona_id)?.name || 'Teacher',
           total: show ? x.total : null, category: show ? x.category : null, feedback: show,
         };
@@ -182,7 +193,7 @@ export async function handle(body, deps) {
       const pool = (a.persona_ids || []).length ? active.filter((q) => a.persona_ids.includes(q.id)) : active;
       if (!pool.length) throw new AppError('no_teacher', 'No teacher is available for this assessment. Contact your recruiter.', 409);
       let persona;
-      if (a.persona_mode === 'choice') persona = pool.find((q) => q.id === body.persona_id);
+      if (a.persona_mode === 'choice' || a.persona_mode === 'practice') persona = pool.find((q) => q.id === body.persona_id);
       else if (a.persona_mode === 'random') persona = pool[Math.floor((deps.random || Math.random)() * pool.length)];
       else persona = pool[0];
       if (!persona) throw new AppError('bad_choice', 'Choose one of the teachers offered.', 400);
@@ -198,7 +209,7 @@ export async function handle(body, deps) {
         log('call.start', sid, `${me.code} with ${persona.name}`),
       ]);
       const durSec = a.duration_min * 60;
-      const callToken = signToken(secret, 'call', { sid, uid: user.id, pid: persona.id, aid: a.id, lvl: level, start: now, dur: durSec, mode, exp: now + (durSec + 20 * 60) * 1000 });
+      const callToken = signToken(secret, 'call', { sid, uid: user.id, pid: persona.id, aid: a.id, lvl: level, start: now, dur: durSec, mode, pr: a.persona_mode === 'practice' ? 1 : 0, exp: now + (durSec + 20 * 60) * 1000 });
       return {
         ok: true, session_id: sid, callToken, persona: publicPersona(persona), items: [first], chain: chainOf(secret, sid, [first]),
         duration_sec: durSec, min_turns: tpl.data.min_turns, interrupt_after_sec: persona.interrupt_after_sec || 0, started_at: now, mode,
@@ -213,7 +224,7 @@ export async function handle(body, deps) {
       if (!safeEqual(chainOf(secret, call.sid, items), String(body.chain || ''))) throw new AppError('bad_transcript', 'The call could not be continued because its record did not match. Start a new call.', 409);
       const text = s(body.text, 1500);
       if (!text) throw new AppError('empty', 'Nothing was heard.', 400);
-      if (items.length >= 120) throw new AppError('too_long', 'This call has reached its maximum length.', 409);
+      if (items.length >= 240) throw new AppError('too_long', 'This call has reached its maximum length.', 409);
       const elapsed = Math.round((now - call.start) / 1000);
       const d = await store.read(['Personas', 'Config']);
       const row = d.Personas.find((q) => q.id === call.pid);
@@ -255,7 +266,7 @@ export async function handle(body, deps) {
       const history = cleanItems(body.items).slice(-60).map((it) => ({ r: it.r, x: s(it.x, 600) })).filter((it) => it.x);
       const greeting = (persona.greeting || []).includes(body.greeting) ? body.greeting : persona.greeting?.[0];
       const out = await deps.live.mint({
-        system: teacherLiveSystem(persona, { level: call.lvl, durationMin: Math.round(call.dur / 60), greeting, history }),
+        system: teacherLiveSystem(persona, { level: call.lvl, durationMin: Math.round(call.dur / 60), greeting, history, quiet: !!body.quiet }),
         voice: LIVE_VOICES[persona.gender] || LIVE_VOICES.female, ttlSec: remaining + 180, modelIndex: int(body.model_index, 0, 9, 0),
       });
       return { ok: true, token: out.token, model: out.model, model_index: out.modelIndex, url: LIVE_WS };
@@ -286,7 +297,8 @@ export async function handle(body, deps) {
       const m = body.meta || {};
       const tech = {
         stt_errors: int(m.stt_errors, 0, 999, 0), reconnects: int(m.reconnects, 0, 999, 0), interruptions: int(m.interruptions, 0, 999, 0),
-        low_confidence: int(m.low_confidence, 0, 999, 0), avg_confidence: Number.isFinite(Number(m.avg_confidence)) ? Math.round(Number(m.avg_confidence) * 100) / 100 : null,
+        low_confidence: int(m.low_confidence, 0, 999, 0), // A live voice call reports no confidence at all (null). Number(null) is 0, which used to flag every live call as a technical problem.
+        avg_confidence: m.avg_confidence !== null && m.avg_confidence !== undefined && m.avg_confidence !== '' && Number.isFinite(Number(m.avg_confidence)) ? Math.round(Number(m.avg_confidence) * 100) / 100 : null,
         browser: s(m.browser, 120), headset: !!m.headset, muted_sec: int(m.muted_sec, 0, 9999, 0),
       };
       // Long silences between the teacher finishing and the candidate's next words are recorded for the recruiter.
@@ -298,7 +310,7 @@ export async function handle(body, deps) {
       const reason = ['candidate', 'teacher', 'time', 'connection'].includes(body.reason) ? body.reason : 'candidate';
       await store.write([
         { op: 'putBlob', tab: 'Transcripts', key: session.id, value: { items, saved_at: iso(now) } },
-        { op: 'update', tab: 'Sessions', id: session.id, patch: { ended_at: iso(now), duration_sec: duration, status, end_reason: reason, candidate_turns: cand.length, candidate_words: nWords, tech, flags: { tech: techFlag, long_gaps: gaps, short: tooShort, unverified: !verified } } },
+        { op: 'update', tab: 'Sessions', id: session.id, patch: { ended_at: iso(now), duration_sec: duration, status, end_reason: reason, candidate_turns: cand.length, candidate_words: nWords, tech, flags: { tech: techFlag, long_gaps: gaps, short: tooShort, unverified: !verified, practice: !!call.pr } } },
         log('call.end', session.id, `${status}, ${cand.length} turns, ${duration}s`),
       ]);
       return { ok: true, session_id: session.id, status, min_turns: minTurns };
@@ -318,7 +330,7 @@ export async function handle(body, deps) {
       if (!tpl || !persona || !transcript) throw new AppError('not_found', 'The transcript, teacher or template for this call is missing.', 404);
       const facts = d.Knowledge.filter((k) => k.status === 'verified').map((k) => k.fact);
       const techNote = session.flags?.tech ? `Speech recognition was unreliable on this call (${session.tech?.stt_errors || 0} errors, ${session.tech?.reconnects || 0} reconnections). Be careful not to blame the candidate for garbled words.` : '';
-      const messages = evaluatorMessages({ items: transcript.items, persona, template: tpl, level: session.level, facts, personas: personas.filter((q) => q.active && q.id !== persona.id), tech: techNote, durationSec: session.duration_sec || 0 });
+      const messages = evaluatorMessages({ items: transcript.items, persona, template: tpl, level: session.level, facts, personas: personas.filter((q) => q.active && q.id !== persona.id), tech: techNote, durationSec: session.duration_sec || 0, practice: !!session.flags?.practice });
       let out;
       let raw = null;
       try {
@@ -339,18 +351,18 @@ export async function handle(body, deps) {
           persona_id: persona.id, persona_name: persona.name, persona_label: persona.label || '', difficulty: persona.difficulty, level: session.level,
           started_at: session.started_at, duration_sec: session.duration_sec, mode: session.mode, end_reason: session.end_reason,
           template_name: tpl.name, template_version: tpl.version, model: out.model, scored_at: iso(now),
-          facts_used: facts.length, tech_flag: !!session.flags?.tech, tech: session.tech, long_gaps: session.flags?.long_gaps || 0, unverified: !!session.flags?.unverified,
+          practice: !!session.flags?.practice, facts_used: facts.length, tech_flag: !!session.flags?.tech, tech: session.tech, long_gaps: session.flags?.long_gaps || 0, unverified: !!session.flags?.unverified,
         },
       });
       await store.write([
         { op: 'putBlob', tab: 'Reports', key: session.id, value: report },
         { op: 'update', tab: 'Sessions', id: session.id, patch: {
-          status: 'scored', total: report.total, percent: report.percent, category: report.category, recommendation: report.hiring.recommendation,
+          status: 'scored', total: report.total, percent: report.percent, category: report.category, recommendation: (report.training || report.hiring).recommendation,
           scores: Object.fromEntries(report.params.map((q) => [q.key, q.marks])), coverage: report.coverage,
           flags: { ...(session.flags || {}), conduct: report.conduct.filter((c) => c.verified).length, inaccurate: report.product.claims.filter((c) => c.verdict === 'inaccurate').length },
           scored_at: iso(now), engine: { model: out.model, template_version: tpl.version },
         } },
-        log(body.force ? 'call.rescore' : 'call.score', session.id, `${report.total}/100, ${report.hiring.recommendation}`),
+        log(body.force ? 'call.rescore' : 'call.score', session.id, `${report.total}/100, ${(report.training || report.hiring).recommendation}`),
       ]);
       return { ok: true, status: 'scored' };
     }
@@ -490,15 +502,20 @@ export async function handle(body, deps) {
       if (!cand || !canSee(cand)) throw new AppError('not_found', 'That candidate was not found.', 404);
       const tpl = d.Templates.find((t) => t.id === body.template_id && t.active);
       if (!tpl) throw new AppError('invalid', 'Choose an assessment template.', 400);
-      const mode = ['fixed', 'choice', 'random'].includes(body.persona_mode) ? body.persona_mode : 'random';
+      const practice = !!body.practice;
+      // Practice (intern training): the intern picks any teacher on the list, as often as the daily limit allows.
+      const mode = practice ? 'practice' : ['fixed', 'choice', 'random'].includes(body.persona_mode) ? body.persona_mode : 'random';
       const activeIds = d.Personas.filter((q) => q.active).map((q) => q.id);
       const ids = (Array.isArray(body.persona_ids) ? body.persona_ids : []).filter((id) => activeIds.includes(id)).slice(0, 30);
-      if (mode === 'fixed' && ids.length !== 1) throw new AppError('invalid', 'Choose one teacher for a fixed assignment.', 400);
-      if (mode === 'choice' && ids.length < 2) throw new AppError('invalid', 'Choose at least two teachers for the candidate to pick from.', 400);
+      if (practice && ids.length < 1) throw new AppError('invalid', 'Choose at least one teacher for the intern to practise with.', 400);
+      if (!practice && mode === 'fixed' && ids.length !== 1) throw new AppError('invalid', 'Choose one teacher for a fixed assignment.', 400);
+      if (!practice && mode === 'choice' && ids.length < 2) throw new AppError('invalid', 'Choose at least two teachers for the candidate to pick from.', 400);
       const due = /^\d{4}-\d{2}-\d{2}$/.test(body.due || '') ? body.due : '';
       const row = {
         candidate_id: cand.id, template_id: tpl.id, persona_mode: mode, persona_ids: ids, level: int(body.level, 0, 3, 0),
-        duration_min: int(body.duration_min, 3, 15, tpl.data.duration_min), attempts: int(body.attempts, 1, 5, tpl.data.attempts), allow_typed: !!body.allow_typed, due, status: 'open',
+        duration_min: int(body.duration_min, 3, 20, tpl.data.duration_min),
+        // For practice the attempts column holds the calls allowed per day, so no new Sheet column is needed.
+        attempts: practice ? int(body.per_day, 1, 10, 3) : int(body.attempts, 1, 5, tpl.data.attempts), allow_typed: !!body.allow_typed, due, status: 'open',
       };
       if (body.id) {
         const cur = d.Assignments.find((a) => a.id === body.id && a.candidate_id === cand.id);
@@ -611,6 +628,22 @@ export async function handle(body, deps) {
       const said = items.filter((it) => it.r === 'c').length + 1;
       if (reply.ended && said < (persona.do_not_call ? 3 : 4)) reply.ended = false;
       return { ok: true, reply: reply.text, ended: reply.ended, model: out.model };
+    }
+
+    case 'installTraining': {
+      adminOnly();
+      const d = await store.read(['Personas', 'Templates'], { fresh: true });
+      const ops = [];
+      for (const q of TRAINING_PERSONAS) {
+        if (d.Personas.some((x) => x.id === q.id)) continue;
+        const { id, name, difficulty, ...data } = q;
+        ops.push({ op: 'append', tab: 'Personas', row: { id, active: true, name, difficulty, data, updated_at: iso(now), updated_by: user.id } });
+      }
+      const teachers = ops.length;
+      const template = !d.Templates.some((t) => t.id === TRAINING_TEMPLATE.id);
+      if (template) ops.push({ op: 'append', tab: 'Templates', row: { ...TRAINING_TEMPLATE, updated_at: iso(now), updated_by: user.id } });
+      if (ops.length) await store.write([...ops, log('training.install', '', `${teachers} teachers${template ? ', rubric' : ''}`)]);
+      return { ok: true, teachers, template, template_id: TRAINING_TEMPLATE.id, persona_ids: TRAINING_PERSONAS.map((q) => q.id) };
     }
 
     case 'saveTemplate': {
@@ -737,5 +770,5 @@ export async function handle(body, deps) {
 
 function cleanItems(raw) {
   if (!Array.isArray(raw)) return [];
-  return raw.slice(0, 200).map((it) => ({ r: it?.r === 't' ? 't' : 'c', x: String(it?.x ?? ''), t: Number(it?.t) || 0 }));
+  return raw.slice(0, 400).map((it) => ({ r: it?.r === 't' ? 't' : 'c', x: String(it?.x ?? ''), t: Number(it?.t) || 0 }));
 }

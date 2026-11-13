@@ -552,3 +552,139 @@ test('Live voice: the browser-reported transcript is saved, tidied and clearly m
   const s2 = await w2.rpc('startCall', { assignment_id: a2 }, c2);
   assert.equal((await w2.raw('endCall', { callToken: s2.callToken, items, chain: 'nope' }, c2)).status, 409);
 });
+
+/* ------------------------------------------------------------ intern training (practice mode) */
+
+import { TRAINING_PERSONAS, TRAINING_TEMPLATE } from '../server/seed.js';
+import { teacherLiveSystem } from '../server/prompts.js';
+
+// Six turns, the fewest a practice call needs to be assessed. The farewell stays last, because it ends the call.
+const PRACTICE_LINES = [...GOOD_LINES.slice(0, 4), 'Before we fix that, may I confirm the number I should share with the counsellor?', GOOD_LINES[4]];
+
+/** A world with the training pack added and one intern given practice access. */
+async function practiceReady(extra = {}) {
+  const base = await ready();
+  const { w, admin, recruiter } = base;
+  // The stand-in teacher normally hangs up on its fifth line. Here it stays on until the caller says goodbye.
+  w.groq.state.teacher = (messages) => (/\b(bye|goodbye)\b/i.test(messages.filter((m) => m.role === 'user').at(-1).content) ? 'Okay, bye. [END_CALL]' : 'Hmm, okay. Tell me a little more.');
+  const pack = await w.rpc('installTraining', {}, admin);
+  const c = await w.rpc('saveCandidate', { name: 'Isha Intern', email: 'isha@example.com' }, recruiter);
+  const a = await w.rpc('saveAssignment', { candidate_id: c.id, template_id: 't_training', practice: true, persona_ids: pack.persona_ids, per_day: 2, duration_min: 20, ...extra }, recruiter);
+  const intern = await w.signIn('isha@example.com', c.access_code);
+  return { ...base, pack, intern, internCode: c.access_code, internId: c.id, practiceId: a.id, practiceSave: a };
+}
+
+test('Training pack: adds 10 teachers and the 8-skill rubric once, and only a Super Admin can add it', async () => {
+  const { w, admin, recruiter } = await ready();
+  assert.equal((await w.raw('installTraining', {}, recruiter)).status, 403);
+  const first = await w.rpc('installTraining', {}, admin);
+  assert.deepEqual([first.teachers, first.template], [10, true]);
+  const again = await w.rpc('installTraining', {}, admin);
+  assert.deepEqual([again.teachers, again.template], [0, false], 'running it twice adds nothing');
+  const home = await w.rpc('adminHome', {}, admin);
+  assert.equal(home.personas.length, 20);
+  const tpl = home.templates.find((t) => t.id === 't_training');
+  assert.deepEqual(tpl.data.parameters.map((q) => q.max), [15, 10, 15, 15, 15, 15, 10, 5]);
+  assert.deepEqual(validateTemplate(TRAINING_TEMPLATE.data), []);
+});
+
+test('Training teachers: each has every field, a different character, and never knows Suraasa facts', () => {
+  assert.equal(new Set(TRAINING_PERSONAS.map((q) => q.name)).size, 10);
+  assert.equal(new Set(TRAINING_PERSONAS.map((q) => q.label)).size, 10);
+  for (const q of TRAINING_PERSONAS) {
+    for (const k of ['public_bio', 'personality', 'style', 'decision', 'behaviour', 'eval_focus', 'subject', 'school_type']) assert.ok(q[k] && q[k].length > 10, `${q.id} ${k}`);
+    assert.ok(q.objections.length >= 3 && q.greeting.length >= 1 && q.pain_points.length >= 2, q.id);
+    const sys = teacherSystem(q, { level: q.level, durationMin: 15 });
+    assert.ok(sys.includes(q.name) && sys.includes('Never state fees'));
+    assert.ok(!/₹|\bINR\b|\d{2},\d{3}/.test(sys), `${q.id} must not carry a fee`);
+  }
+});
+
+test('Practice: an intern picks any teacher, calls up to 20 minutes, and the limit is per day', async () => {
+  const { w, intern, internCode, practiceId, practiceSave } = await practiceReady();
+  assert.ok(practiceSave.ok, practiceSave.error);
+  let home = await w.rpc('myHome', {}, intern);
+  const a = home.assignments[0];
+  assert.deepEqual([a.practice, a.duration_min, a.attempts, a.left, a.personas.length], [true, 20, 2, 2, 10]);
+  assert.equal((await w.raw('startCall', { assignment_id: practiceId }, intern)).status, 400, 'a teacher must be chosen');
+  const one = await playCall(w, intern, practiceId, PRACTICE_LINES, { personaId: 'tr03' });
+  assert.equal(one.start.persona.name, 'Arvind Deshpande');
+  assert.equal(one.start.duration_sec, 1200);
+  assert.equal(one.done.status, 'ended');
+  const two = await playCall(w, intern, practiceId, PRACTICE_LINES, { personaId: 'tr10' });
+  assert.equal(two.done.status, 'ended');
+  home = await w.rpc('myHome', {}, intern);
+  assert.equal(home.assignments[0].left, 0);
+  assert.match(home.assignments[0].blocked, /today/);
+  assert.equal((await w.raw('startCall', { assignment_id: practiceId, persona_id: 'tr01' }, intern)).status, 403);
+  w.clock.t += 24 * 3600000; // the next day in India; sign-ins last 12 hours, so the intern signs in again
+  const next = await w.signIn('isha@example.com', internCode);
+  home = await w.rpc('myHome', {}, next);
+  assert.deepEqual([home.assignments[0].left, home.assignments[0].blocked], [2, null]);
+  assert.ok((await w.rpc('startCall', { assignment_id: practiceId, persona_id: 'tr01' }, next)).ok);
+});
+
+test('Practice: scored on the 8 skills, and the intern sees a training recommendation, never a hiring one', async () => {
+  const { w, intern, practiceId, recruiter } = await practiceReady();
+  const { session_id } = await playCall(w, intern, practiceId, PRACTICE_LINES, { personaId: 'tr04' });
+  assert.equal((await w.rpc('score', { session_id }, intern)).status, 'scored');
+  const evalPrompt = w.groq.state.calls.at(-1).messages[0].content;
+  assert.ok(evalPrompt.includes('practising before speaking to real teachers'));
+  const mine = await w.rpc('getSession', { session_id }, intern);
+  assert.equal(mine.view, 'candidate');
+  assert.equal(mine.report.params.length, 8);
+  // levels 3,3,2,3,2,2,3,2 on maxima 15,10,15,15,15,15,10,5
+  assert.deepEqual(mine.report.params.map((q) => q.marks), [11.5, 7.5, 7.5, 11.5, 7.5, 7.5, 7.5, 2.5]);
+  assert.equal(mine.report.total, 63);
+  assert.equal(mine.report.training.recommendation, 'Needs more practice');
+  assert.ok(!('hiring' in mine.report), 'the hiring recommendation is never sent to an intern');
+  assert.ok(Array.isArray(mine.report.product.claims));
+  const staff = await w.rpc('getSession', { session_id }, recruiter);
+  assert.equal(staff.session.recommendation, 'Needs more practice');
+  assert.equal(staff.session.flags.practice, true);
+  const home = await w.rpc('myHome', {}, intern);
+  assert.deepEqual([home.sessions[0].practice, home.sessions[0].total, home.sessions[0].feedback], [true, 63, true]);
+});
+
+test('Practice does not change hiring assessments: no training recommendation, and the 15-minute cap on old inputs still holds at 20', async () => {
+  const { w, candidate, assignmentId, recruiter, candidateId } = await ready();
+  const { session_id } = await playCall(w, candidate, assignmentId, GOOD_LINES);
+  await w.rpc('score', { session_id }, candidate);
+  const { report } = await w.rpc('getSession', { session_id }, recruiter);
+  assert.equal(report.training, null);
+  assert.equal(report.hiring.recommendation, 'Recommended');
+  const mine = await w.rpc('getSession', { session_id }, candidate);
+  assert.ok(!('training' in mine.report) && !('hiring' in mine.report) && !('product' in mine.report));
+  const long = await w.rpc('saveAssignment', { candidate_id: candidateId, template_id: 't_default', persona_mode: 'fixed', persona_ids: ['p01'], duration_min: 99 }, recruiter);
+  const home = await w.rpc('adminHome', {}, recruiter);
+  assert.equal(home.assignments.find((x) => x.id === long.id).duration_min, 20);
+});
+
+test('Long live calls: the token asks Google to keep the session going, and a quiet renewal never greets again', async () => {
+  const { w, intern, practiceId } = await practiceReady();
+  w.enableLive();
+  const start = await w.rpc('startCall', { assignment_id: practiceId, persona_id: 'tr02', mode: 'live' }, intern);
+  assert.equal(start.mode, 'live');
+  await w.rpc('liveToken', { callToken: start.callToken, greeting: start.items[0].x }, intern);
+  assert.deepEqual(w.gemini.state.calls.at(-1).body.bidiGenerateContentSetup.contextWindowCompression, { slidingWindow: {} });
+  const items = [{ r: 't', x: 'Yes, hello? Deepa speaking.', t: 0 }, { r: 'c', x: 'Hello ma\'am, Isha from Suraasa.', t: 900 }];
+  await w.rpc('liveToken', { callToken: start.callToken, items, quiet: true }, intern);
+  const quiet = w.gemini.state.calls.at(-1).body.bidiGenerateContentSetup.systemInstruction.parts[0].text;
+  assert.ok(quiet.includes('Caller: Hello ma\'am, Isha from Suraasa.') && quiet.includes('Do not greet again'));
+  assert.ok(!quiet.includes('Sorry, the line dropped'));
+  const dropped = teacherLiveSystem(TRAINING_PERSONAS[1], { level: 2, durationMin: 15, history: items });
+  assert.ok(dropped.includes('Sorry, the line dropped'));
+});
+
+test('Live voice: a call with no speech-confidence figure is not flagged as a technical problem', async () => {
+  const { w, admin, candidate, assignmentId } = await ready();
+  w.enableLive();
+  const start = await w.rpc('startCall', { assignment_id: assignmentId, mode: 'live' }, candidate);
+  const items = [{ r: 't', x: 'Hello?', t: 0 }, ...GOOD_LINES.flatMap((x, i) => [{ r: 'c', x, t: 1000 + i * 9000 }, { r: 't', x: 'Hmm, go on.', t: 5000 + i * 9000 }])];
+  w.clock.t += 60000;
+  const done = await w.rpc('endCall', { callToken: start.callToken, items, chain: '', meta: { avg_confidence: null, stt_errors: 0, live_reconnects: 0, reconnects: 0 }, reason: 'candidate' }, candidate);
+  assert.equal(done.status, 'ended');
+  const home = await w.rpc('adminHome', {}, admin);
+  const sess = home.sessions.find((x) => x.id === start.session_id);
+  assert.deepEqual([sess.tech.avg_confidence, sess.flags.tech, sess.flags.unverified], [null, false, true]);
+});

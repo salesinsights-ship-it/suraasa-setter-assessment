@@ -6,7 +6,7 @@ export const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString('en-IN',
 export const fmtDateTime = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '');
 export const fmtDur = (sec) => { const s = Math.max(0, Math.round(sec || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 export const initials = (name) => String(name || '?').replace(/^Dr\.?\s+/i, '').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-export const recTone = (r) => ({ 'Strongly Recommended': 'good', Recommended: 'blue', Borderline: 'warn', 'Not Recommended': 'bad' }[r] || '');
+export const recTone = (r) => ({ 'Strongly Recommended': 'good', Recommended: 'blue', Borderline: 'warn', 'Not Recommended': 'bad', 'Ready for live calls': 'good', 'Nearly ready': 'blue', 'Needs more practice': 'warn', 'Needs coaching': 'bad' }[r] || '');
 export const pctTone = (p) => (p >= 75 ? 'good' : p >= 50 ? '' : p >= 35 ? 'warn' : 'bad');
 export const STATUS = {
   in_progress: ['In progress', 'blue'], ended: ['Awaiting score', 'warn'], scored: ['Scored', 'good'],

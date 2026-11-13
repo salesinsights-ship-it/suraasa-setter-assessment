@@ -38,7 +38,7 @@ export default function Call({ assignmentId, personaId }) {
   useEffect(() => {
     rpc('myHome').then((d) => {
       const a = d.assignments.find((x) => x.id === assignmentId);
-      if (!a) setError('This assessment was not found.'); else setInfo({ ...a, live: !!d.live && liveSupported() });
+      if (!a) setError('This call was not found.'); else setInfo({ ...a, live: !!d.live && liveSupported() });
     }).catch((e) => setError(e.message));
     const on = () => setOnline(true); const off = () => setOnline(false);
     window.addEventListener('online', on); window.addEventListener('offline', off);
@@ -146,7 +146,7 @@ export default function Call({ assignmentId, personaId }) {
   function makeLive(c) {
     const add = (it) => { const cur = ref.current.call; persist({ ...cur, items: cur.items.concat([it]) }); };
     return createLive({
-      getToken: (modelIndex, items) => rpc('liveToken', { callToken: c.callToken, model_index: modelIndex, items, greeting: c.greet }),
+      getToken: (modelIndex, items, quiet) => rpc('liveToken', { callToken: c.callToken, model_index: modelIndex, items, greeting: c.greet, quiet: !!quiet }),
       clock: () => Date.now() - c.client_start,
       items: () => ref.current.call.items,
       canEnd: () => ref.current.call.items.filter((x) => x.r === 'c').length >= (c.hangup_after || 4),
@@ -240,7 +240,7 @@ export default function Call({ assignmentId, personaId }) {
       <div className="page" style={{ maxWidth: 640 }}>
         <p><a href="#/">Back</a></p>
         <h1 className="mt">Before you call</h1>
-        <p className="muted">This takes a minute. The call itself is {info.duration_min} minutes.</p>
+        <p className="muted">This takes a minute. The call itself is {info.practice ? 'up to ' : ''}{info.duration_min} minutes.</p>
         {resume && (
           <div className="note warn mt"><b>You have a call in progress.</b> It was interrupted before it finished. You can pick it up where it stopped.
             <div className="mt"><Btn kind="primary" onClick={() => begin(resume)}>Resume the call</Btn></div></div>
@@ -264,9 +264,9 @@ export default function Call({ assignmentId, personaId }) {
             <li>The teacher answers first. Then introduce yourself and take the call forward.</li>
             <li>{info.live ? 'Speak as you would on a phone call. You can talk over the teacher, and the teacher can talk over you.' : 'Pause when you finish a thought. The teacher replies after a short silence.'}</li>
             <li>The call ends at {info.duration_min} minutes, or earlier if you or the teacher end it. You need at least {info.min_turns} turns for it to be assessed.</li>
-            <li>You have {info.left} attempt{info.left === 1 ? '' : 's'}. A call that drops for technical reasons can be resumed.</li>
+            <li>{info.practice ? `You have ${info.left} practice call${info.left === 1 ? '' : 's'} left today.` : `You have ${info.left} attempt${info.left === 1 ? '' : 's'}.`} A call that drops for technical reasons can be resumed.</li>
           </ul>
-          <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ marginTop: 4 }} data-testid="consent" /><span className="small">{info.live ? 'I understand that my voice is sent to Google\'s Gemini service to run this call and turn it into text, that Google may use it to improve its products, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s recruitment team.' : 'I understand that my speech is turned into text by my browser\'s speech service, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s recruitment team.'}</span></label>
+          <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ marginTop: 4 }} data-testid="consent" /><span className="small">{info.live ? 'I understand that my voice is sent to Google\'s Gemini service to run this call and turn it into text, that Google may use it to improve its products, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.' : 'I understand that my speech is turned into text by my browser\'s speech service, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.'}</span></label>
         </div>
         {!supported && canTyped && <div className="note mt">Your recruiter has allowed a typed call for this assessment. You will type instead of speaking.</div>}
         <div className="row mt wrap"><Btn kind="primary lg" disabled={!ready || !!info.blocked} onClick={() => begin(null)} data-testid="start-call">Start the call</Btn>{!consent && <span className="small muted">Tick the box above to continue.</span>}{consent && !ready && <span className="small muted">Check your microphone first.</span>}</div>

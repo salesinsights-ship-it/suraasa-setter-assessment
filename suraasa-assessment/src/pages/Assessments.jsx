@@ -20,7 +20,7 @@ function TemplateEditor({ start, canEdit, onClose }) {
         <fieldset disabled={!canEdit} style={{ border: 0, padding: 0, margin: 0 }} className="col">
           <Field label="Template name"><Input required value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} /></Field>
           <div className="grid g3">
-            <Field label="Call length" hint="minutes, 3 to 15"><Input type="number" min="3" max="15" value={d.duration_min} onChange={(e) => setD({ duration_min: Number(e.target.value) })} /></Field>
+            <Field label="Call length" hint="minutes, 3 to 20"><Input type="number" min="3" max="20" value={d.duration_min} onChange={(e) => setD({ duration_min: Number(e.target.value) })} /></Field>
             <Field label="Attempts" hint="1 to 5"><Input type="number" min="1" max="5" value={d.attempts} onChange={(e) => setD({ attempts: Number(e.target.value) })} /></Field>
             <Field label="Fewest candidate turns to assess"><Input type="number" min="2" max="12" value={d.min_turns} onChange={(e) => setD({ min_turns: Number(e.target.value) })} /></Field>
           </div>

@@ -22,12 +22,12 @@ function fromBase64(b64) {
 const tidy = (t) => t.replace(/\s+/g, ' ').trim();
 
 export function createLive(opts) {
-  const stats = { interruptions: 0, reconnects: 0, stt_errors: 0, low_confidence: 0, muted_ms: 0 };
+  const stats = { refreshes: 0, interruptions: 0, reconnects: 0, stt_errors: 0, low_confidence: 0, muted_ms: 0 };
   const decoder = new TextDecoder();
   let ws = null; let ctx = null; let stream = null; let analyser = null; let meter = null; let watch = null;
   let ready = false; let closed = false; let muted = false; let mutedAt = 0; let ending = false;
   let nextTime = 0; const sources = new Set();
-  let cand = ''; let teacher = ''; let lastState = ''; let modelIndex = 0; let reconnecting = false;
+  let cand = ''; let teacher = ''; let lastState = ''; let modelIndex = 0; let reconnecting = false; let refreshing = false; let quiet = false;
 
   const state = (s) => { if (s !== lastState) { lastState = s; opts.onState?.(s); } };
   const send = (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); };
@@ -80,6 +80,7 @@ export function createLive(opts) {
   }
 
   function onMessage(msg) {
+    if (msg.goAway) { refresh(); return; }
     if (msg.toolCall) { onToolCall(msg.toolCall); return; }
     const sc = msg.serverContent;
     if (!sc) return;
@@ -101,7 +102,7 @@ export function createLive(opts) {
 
   /** Opens one connection. Resolves when Google confirms the session is set up. */
   async function connect(history) {
-    const tk = await opts.getToken(modelIndex, history || []);
+    const tk = await opts.getToken(modelIndex, history || [], quiet);
     modelIndex = tk.model_index ?? modelIndex;
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -118,7 +119,7 @@ export function createLive(opts) {
       sock.onclose = (ev) => {
         clearTimeout(timer);
         if (!settled) { settled = true; reject(new Error(ev.reason || 'closed ' + ev.code)); return; }
-        if (sock === ws && !closed && !ending) drop();
+        if (sock === ws && !closed && !ending && !refreshing) drop();
       };
       sock.onerror = () => { /* onclose follows with the detail */ };
     });
@@ -135,6 +136,26 @@ export function createLive(opts) {
       }
     }
     throw lastError;
+  }
+
+  /**
+   * Google closes each connection after about ten minutes and warns first. On that warning a new connection is
+   * opened with the conversation so far and the old one is let go, so a long call carries on without the caller noticing.
+   */
+  async function refresh() {
+    if (refreshing || reconnecting || closed || ending) return;
+    refreshing = true;
+    const old = ws;
+    try {
+      for (let i = 0; i < 25 && speaking() && !closed; i++) await new Promise((r) => setTimeout(r, 200)); // let the teacher finish the sentence
+      flushCandidate(); flushTeacher();
+      quiet = true;
+      await connectAny(opts.items());
+      stats.refreshes++;
+      try { old?.close(); } catch { /* already closed */ }
+    } catch { /* handled below */ } finally { quiet = false; refreshing = false; }
+    // If the new line could not be opened and the old one has gone, fall back to the ordinary reconnect.
+    if (!closed && !ending && (!ws || ws.readyState > 1)) drop();
   }
 
   async function drop() {

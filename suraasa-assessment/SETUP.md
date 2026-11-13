@@ -100,6 +100,35 @@ What to know before using it for real hiring:
 - **Free limits are not published.** If the limit is hit, calls fall back to the standard voice.
 - **Preview feature.** Google marks the token method as Preview. If Google changes it, live voice stops and calls fall back until the code is updated.
 
+## Intern training (practice calls)
+
+The same site also trains Pre-Sales interns. An intern signs in, picks any of 10 training teachers, has a live voice call of up to 20 minutes, and sees full feedback straight away. Nothing extra is paid for: it uses the same free Gemini and Groq keys.
+
+No change to the Google Sheet script is needed.
+
+1. Open any person under **Candidates** (add the intern first if they are new), and click **Assign a mock call**.
+2. Click **Intern practice**. The first time, a Super Admin clicks **Add the training pack**. This adds the 10 training teachers and the 8-skill, 100-mark rubric. It only needs doing once.
+3. Set the call length (15 minutes by default, up to 20), the practice calls allowed each day (3 by default), and optionally a last date. Untick any teacher the intern should not get.
+4. Click **Assign**. Give the intern their access code.
+
+What the intern gets:
+
+- A list of the 10 teachers to choose from, and a count of calls left today. The count resets at midnight India time.
+- After each call: a score out of 100 across 8 skills, quotes from their own call as evidence, what they said about Suraasa that did not match the verified facts, objections they did not handle, and a training recommendation (Ready for live calls, Nearly ready, Needs more practice, Needs coaching).
+- A running summary of scored calls, average and best score.
+
+What the trainer gets: every practice call appears on the person's page with the transcript and report, exactly like a hiring call.
+
+The 10 training teachers are Friendly and Interested, Busy, Skeptical, Budget-Conscious, Experienced, Beginner, Uninterested, Analytical, Frustrated, and Highly Interested. Edit them under **Teachers** like any other teacher. Test each one with **Test this teacher** before interns use it.
+
+Things to know:
+
+- **Live voice needs `GEMINI_API_KEY`.** Without it, practice calls use the browser's own voice, which takes turns and sounds robotic.
+- **Long calls.** Google renews a live connection about every 10 minutes. The site opens a new line with the conversation so far, and the teacher carries on without mentioning it. There can be a pause of a second or two at that moment.
+- **Free limits.** Google does not publish the free limit for live voice. If it is reached, the call falls back to the browser voice. Twenty-minute calls use the free allowance faster than eight-minute ones, so start with a few interns and watch for fallbacks.
+- **No audio recording.** The transcript is stored. The audio is not, because the free setup has nowhere to keep it.
+- **Verify the product facts first** (Assessments > Product facts). Until then, reports cannot say whether what an intern said about Suraasa was correct.
+
 ## Limits of the free setup
 
 - **Turn-taking.** Without a headset the candidate waits for "Your turn", because the microphone is paused while the teacher speaks. With a headset they can talk over the teacher.

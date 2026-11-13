@@ -38,26 +38,30 @@ export default function ReportView({ report, staff }) {
         </div>
       </div>
 
-      {staff && (
-        <div className="card col">
-          <div className="row between wrap"><h2>AI hiring recommendation</h2><Badge tone={recTone(report.hiring.recommendation)}>{report.hiring.recommendation}</Badge></div>
-          <p>{report.hiring.rationale}</p>
-          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{report.hiring.basis.map((b, i) => <li key={i}>{b}</li>)}</ul>
-          <p className="tiny muted">This supports your judgement. It is not a hiring decision. Scores are calculated by the app from the AI's evidence: {report.coverage}% of proposed marks were backed by a quote found in the transcript. Model: {m.model}. Rubric: {m.template_name}, version {m.template_version}.</p>
-          {m.unverified && <div className="note warn">Live voice call. The transcript came from the candidate's browser and could not be checked by the server. Read it through before relying on this score.</div>}
-          {m.tech_flag && <div className="note warn">Technical problems were recorded on this call ({m.tech?.stt_errors || 0} speech recognition errors, {m.tech?.reconnects || 0} reconnections). Consider voiding it and allowing another attempt.</div>}
-          {m.long_gaps > 0 && <div className="note warn">There {m.long_gaps === 1 ? 'was 1 silence' : `were ${m.long_gaps} silences`} of over two minutes before the candidate replied.</div>}
-          {!report.product.checked && <div className="note warn">Product accuracy was not checked, because no product facts have been verified yet. Approve them under Assessments, then score again.</div>}
-          {report.conduct.filter((c) => c.verified).map((c, i) => (
-            <div className="note bad" key={i}><b>{CONDUCT[c.type]}.</b> {c.note}<div style={{ marginTop: 6 }}><Quote q={c} /></div></div>
-          ))}
-          {report.product.claims.length > 0 && (
-            <div className="col gap-s"><h3>What the candidate said about Suraasa</h3>
-              {report.product.claims.map((c, i) => <div key={i} className="row" style={{ alignItems: 'flex-start' }}><Badge tone={c.verdict === 'accurate' ? 'good' : c.verdict === 'inaccurate' ? 'bad' : 'warn'}>{c.verdict === 'unverifiable' ? 'Not in verified facts' : c.verdict}</Badge><span className="small grow">"{c.quote}" {c.note && <span className="muted">{c.note}</span>}</span></div>)}
-            </div>
-          )}
-        </div>
-      )}
+      {(staff || report.training) && (() => {
+        const rec = report.training || report.hiring;
+        const claims = report.product?.claims || [];
+        return (
+          <div className="card col" data-testid="recommendation">
+            <div className="row between wrap"><h2>{report.training ? 'Training recommendation' : 'AI hiring recommendation'}</h2><Badge tone={recTone(rec.recommendation)}>{rec.recommendation}</Badge></div>
+            <p>{rec.rationale}</p>
+            <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{rec.basis.map((b, i) => <li key={i}>{b}</li>)}</ul>
+            {staff && <p className="tiny muted">{report.training ? 'This guides the intern\'s practice. It is not a performance rating.' : 'This supports your judgement. It is not a hiring decision.'} Scores are calculated by the app from the AI's evidence: {report.coverage}% of proposed marks were backed by a quote found in the transcript. Model: {m.model}. Rubric: {m.template_name}, version {m.template_version}.</p>}
+            {staff && m.unverified && <div className="note warn">Live voice call. The transcript came from the candidate's browser and could not be checked by the server. Read it through before relying on this score.</div>}
+            {staff && m.tech_flag && <div className="note warn">Technical problems were recorded on this call ({m.tech?.stt_errors || 0} speech recognition errors, {m.tech?.reconnects || 0} reconnections). Consider voiding it and allowing another attempt.</div>}
+            {staff && m.long_gaps > 0 && <div className="note warn">There {m.long_gaps === 1 ? 'was 1 silence' : `were ${m.long_gaps} silences`} of over two minutes before the candidate replied.</div>}
+            {report.product && !report.product.checked && <div className="note warn">{staff ? 'Product accuracy was not checked, because no product facts have been verified yet. Approve them under Assessments, then score again.' : 'What you said about Suraasa was not checked for accuracy on this call, because the product facts have not been approved yet.'}</div>}
+            {(report.conduct || []).filter((c) => c.verified).map((c, i) => (
+              <div className="note bad" key={i}><b>{CONDUCT[c.type]}.</b> {c.note}<div style={{ marginTop: 6 }}><Quote q={c} /></div></div>
+            ))}
+            {claims.length > 0 && (
+              <div className="col gap-s"><h3>{staff ? 'What the candidate said about Suraasa' : 'What you said about Suraasa'}</h3>
+                {claims.map((c, i) => <div key={i} className="row" style={{ alignItems: 'flex-start' }}><Badge tone={c.verdict === 'accurate' ? 'good' : c.verdict === 'inaccurate' ? 'bad' : 'warn'}>{c.verdict === 'unverifiable' ? 'Not in verified facts' : c.verdict}</Badge><span className="small grow">"{c.quote}" {c.note && <span className="muted">{c.note}</span>}</span></div>)}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {full && (
         <div className="card">

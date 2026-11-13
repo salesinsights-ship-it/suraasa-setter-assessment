@@ -485,6 +485,68 @@ await step('Live voice unavailable: the call falls back to the standard voice by
   await fp.context().close();
 });
 
+await step('Intern practice: admin adds the training pack and gives practice access; the intern picks a teacher, the long call renews its line silently, and feedback shows a training recommendation', async () => {
+  const adminToken = await world.signIn(world.admin.email, world.admin.code);
+  const made = await world.rpc('saveCandidate', { name: 'Isha Intern', email: 'isha@example.com' }, adminToken);
+  const ap = await open();
+  await signIn(ap, world.admin.email, world.admin.code);
+  await ap.waitForSelector('[data-testid=stats]');
+  await ap.evaluate((id) => { window.location.hash = '#/candidates/' + id; }, made.id);
+  await ap.click('[data-testid=assign]');
+  await ap.click('[data-testid=kind-practice]');
+  await ap.click('[data-testid=install-training]');
+  await ap.waitForFunction(() => document.querySelectorAll('.modal label.card input:checked').length === 10, null, { timeout: 15000 });
+  assert.equal(await ap.locator('[data-testid=install-training]').count(), 0, 'the pack notice goes once it is added');
+  assert.equal(await ap.inputValue('.modal label:has-text("Call length") input'), '15');
+  await shot(ap, '20-assign-practice');
+  await ap.click('.modal button:has-text("Assign")');
+  await ap.waitForSelector('td:has-text("Practice, 10 teachers")');
+  await ap.context().close();
+
+  const ip = await open();
+  await signIn(ip, 'isha@example.com', made.access_code);
+  await ip.waitForSelector('[data-testid=assignment]');
+  const text = await ip.textContent('body');
+  assert.ok(text.includes('Practice with an AI teacher') && text.includes('3 of 3 calls left today') && text.includes('Ayesha Khan') && text.includes('Harpreet Sandhu'));
+  assert.ok(!text.includes('Salary has barely moved'), 'hidden teacher details stay on the server');
+  assert.ok(await ip.isDisabled('button:has-text("Get ready for the call")'), 'a teacher must be picked first');
+  await ip.click('button.card:has-text("Rekha Nair")');
+  await shot(ip, '21-intern-home');
+  await ip.click('text=Get ready for the call');
+  await ip.click('text=Check microphone');
+  await ip.waitForSelector('text=Microphone is allowed');
+  assert.ok((await ip.textContent('body')).includes('practice calls left today') && (await ip.textContent('body')).includes('training team'));
+  await ip.check('[data-testid=consent]');
+  await ip.click('[data-testid=start-call]');
+  await waitState(ip, 'listening');
+  assert.ok((await ip.textContent('[data-testid=phone]')).includes('Rekha Nair'));
+  await ip.evaluate((l) => window.__liveSay(l, 'Hmm. Go on.'), GOOD_LINES[0]);
+  // Google warns that the connection is about to be renewed: a new line opens with the talk so far, and nobody says "the line dropped"
+  const before = await ip.evaluate(() => window.__liveUrls.length);
+  await ip.evaluate(() => window.__live.emit({ goAway: { timeLeft: '50s' } }));
+  await ip.waitForFunction((n) => window.__liveUrls.length === n + 1 && window.__live.audio >= 2, before, { timeout: 15000 });
+  assert.ok(!(await ip.evaluate(() => window.__liveNotes.slice(-1)[0] || '')).includes('reconnected'), 'a planned renewal is silent');
+  const renewed = world.gemini.state.calls.at(-1).body.bidiGenerateContentSetup.systemInstruction.parts[0].text;
+  assert.ok(renewed.includes('Do not greet again') && renewed.includes('Caller: ' + GOOD_LINES[0]));
+  assert.equal(await state(ip), 'listening');
+  for (const line of [...GOOD_LINES.slice(1, 4), 'Before we fix that, may I confirm the number I should share with the counsellor?']) await ip.evaluate((l) => window.__liveSay(l, 'Hmm, I see. Go on.'), line);
+  await ip.evaluate((l) => window.__liveSay(l, 'Fine, I will speak to the counsellor. Bye.', true), GOOD_LINES[4]);
+  await ip.waitForSelector('text=Your call result', { timeout: 25000 });
+  await ip.waitForSelector('[data-testid=recommendation]');
+  const result = await ip.textContent('body');
+  assert.ok(result.includes('Training recommendation') && !result.includes('hiring recommendation'));
+  assert.equal(await ip.locator('[data-testid=param]').count(), 8);
+  await shot(ip, '22-intern-result');
+  const home = await world.rpc('adminHome', {}, adminToken);
+  const sess = home.sessions.find((x) => x.candidate_id === made.id);
+  assert.equal(sess.tech.reconnects, 0, 'a planned renewal is not counted as a connection problem');
+  await ip.click('text=Back to your dashboard');
+  await ip.waitForSelector('[data-testid=progress]');
+  assert.ok((await ip.textContent('body')).includes('2 of 3 calls left today'));
+  await shot(ip, '23-intern-progress');
+  await ip.context().close();
+});
+
 await step('No JavaScript errors on any page', async () => { assert.deepEqual(errors, []); });
 
 await browser.close();

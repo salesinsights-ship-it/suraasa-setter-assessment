@@ -63,7 +63,7 @@ export function teacherSystem(persona, { level, durationMin, elapsedSec = 0, int
 }
 
 /** Instructions for a live voice call, where the teacher speaks and listens in real time. */
-export function teacherLiveSystem(persona, { level, durationMin, greeting, history = [] } = {}) {
+export function teacherLiveSystem(persona, { level, durationMin, greeting, history = [], quiet = false } = {}) {
   const base = teacherSystem(persona, { level, durationMin, elapsedSec: 0 }).split('\n')
     .filter((line) => !line.startsWith('TIME:') && !line.includes('[END_CALL]') && !line.startsWith('- Write the Hindi'));
   const lines = base.concat([
@@ -76,7 +76,12 @@ export function teacherLiveSystem(persona, { level, durationMin, greeting, histo
     '- If the caller talks over you, stop and listen, as people do on the phone.',
     '- When the call is truly over (you have agreed a next step and said goodbye, or you are hanging up), say your goodbye first and then call the end_call function. Never call it before then, and never mention it.',
   ]);
-  if (history.length) {
+  if (history.length && quiet) {
+    // The phone system renews its connection every few minutes on a long call. The caller must not notice.
+    lines.push('', 'EARLIER IN THIS CALL (you are in the middle of this call; carry on from exactly here)');
+    for (const it of history) lines.push((it.r === 't' ? 'You: ' : 'Caller: ') + it.x);
+    lines.push('- Do not greet again, do not say the line dropped, and do not repeat yourself. Wait for the caller to speak, then answer as if nothing happened.');
+  } else if (history.length) {
     lines.push('', 'EARLIER IN THIS CALL (the line dropped for a moment; carry on from here and do not repeat yourself)');
     for (const it of history) lines.push((it.r === 't' ? 'You: ' : 'Caller: ') + it.x);
     lines.push('- When you receive the note [call reconnected], say only: "Hello? Sorry, the line dropped. Please go on."');
@@ -141,11 +146,13 @@ export function transcriptText(items) {
   return items.map((it) => (it.r === 'c' ? `C${++c}: ${it.x}` : `T${++t}: ${it.x}`)).join('\n');
 }
 
-export function evaluatorMessages({ items, persona, template, level, facts, personas, tech, durationSec }) {
+export function evaluatorMessages({ items, persona, template, level, facts, personas, tech, durationSec, practice = false }) {
   const params = template.data.parameters;
   const system = [
     'You assess mock sales calls for Suraasa, an Indian company that trains schoolteachers. Suraasa is hiring Pre-Sales (Setter) interns. A setter phones a teacher, builds rapport, understands their situation, introduces Suraasa and books a counselling session. A setter does not close a sale.',
-    'You will read a transcript between a CANDIDATE (lines starting C) and a TEACHER played by an AI (lines starting T). Assess only the candidate. Your assessment helps a human recruiter. You do not decide who is hired.',
+    practice
+      ? 'You will read a transcript between a CANDIDATE (lines starting C) and a TEACHER played by an AI (lines starting T). The candidate is an intern already at Suraasa, practising before speaking to real teachers. Assess only the candidate. Your feedback is read by the intern and their trainer, so make it specific and usable: say what to do differently next time.'
+      : 'You will read a transcript between a CANDIDATE (lines starting C) and a TEACHER played by an AI (lines starting T). Assess only the candidate. Your assessment helps a human recruiter. You do not decide who is hired.',
     '',
     'FAIRNESS RULES',
     '- Score what the candidate actually did on this call, with evidence. Fluent or impressive English earns nothing by itself.',

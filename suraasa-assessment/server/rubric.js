@@ -4,6 +4,8 @@
  */
 
 export const RECOMMENDATIONS = ['Strongly Recommended', 'Recommended', 'Borderline', 'Not Recommended'];
+/** The same four bands, worded for an intern in training instead of a hiring decision. */
+export const TRAINING_RECOMMENDATIONS = ['Ready for live calls', 'Nearly ready', 'Needs more practice', 'Needs coaching'];
 const CONDUCT_TYPES = ['pressure', 'misleading', 'ignored_do_not_call', 'disrespect', 'gaming'];
 const VERDICTS = ['yes', 'partly', 'no'];
 
@@ -46,7 +48,7 @@ export function validateTemplate(data) {
   if (sum !== 100) errors.push(`Marks must add up to 100. They add up to ${sum}.`);
   const th = data?.thresholds || {};
   if (!(th.strong > th.recommended && th.recommended > th.borderline && th.borderline > 0 && th.strong <= 100)) errors.push('Thresholds must go down in order: Strongly Recommended, Recommended, Borderline.');
-  if (!(data.duration_min >= 3 && data.duration_min <= 15)) errors.push('Call length must be 3 to 15 minutes.');
+  if (!(data.duration_min >= 3 && data.duration_min <= 20)) errors.push('Call length must be 3 to 20 minutes.');
   if (!(data.attempts >= 1 && data.attempts <= 5)) errors.push('Attempts must be 1 to 5.');
   if (!(data.min_turns >= 2 && data.min_turns <= 12)) errors.push('Minimum turns must be 2 to 12.');
   if (!['none', 'summary', 'full'].includes(data.candidate_feedback)) errors.push('Choose what candidates can see.');
@@ -114,8 +116,12 @@ export function buildReport({ raw, items, template, personas, meta }) {
   if (provenConduct.length) cap(2, `Conduct concern on the call (${[...new Set(provenConduct.map((c) => c.type.replace(/_/g, ' ')))].join(', ')}), so the recommendation cannot be higher than Borderline.`);
   if (inaccurate.length >= 2) cap(2, 'Two or more statements about Suraasa contradicted the verified facts.');
   if (coverage < 60 && claimed > 0) cap(2, `Only ${coverage}% of the proposed marks were backed by a quote found in the transcript.`);
-  if (meta.unverified) basis.push('This was a live voice call. Its transcript was reported by the candidate\'s browser and could not be checked by the server, so read the transcript before relying on the score.');
-  if (meta.tech_flag) basis.push('Technical problems were recorded on this call. Consider a second attempt before deciding.');
+  if (meta.practice) {
+    if (meta.tech_flag) basis.push('Technical problems were recorded on this call, so treat this score with care and take another call.');
+  } else {
+    if (meta.unverified) basis.push('This was a live voice call. Its transcript was reported by the candidate\'s browser and could not be checked by the server, so read the transcript before relying on the score.');
+    if (meta.tech_flag) basis.push('Technical problems were recorded on this call. Consider a second attempt before deciding.');
+  }
 
   const a = raw?.analysis || {};
   const verdict = (o) => ({ verdict: VERDICTS.includes(o?.verdict) ? o.verdict : 'partly', why: str(o?.why) });
@@ -156,6 +162,8 @@ export function buildReport({ raw, items, template, personas, meta }) {
     conduct,
     product: { checked: meta.facts_used > 0, claims },
     hiring: { recommendation: RECOMMENDATIONS[rec], basis, rationale: str(raw?.rationale, 700) },
+    // A practice call by an intern in training gets a training recommendation in place of a hiring one.
+    training: meta.practice ? { recommendation: TRAINING_RECOMMENDATIONS[rec], basis, rationale: str(raw?.rationale, 700) } : null,
   };
 }
 
@@ -169,6 +177,8 @@ export function reportForCandidate(report, policy) {
     strongest: report.strongest, weakest: report.weakest,
     recommendations: { ...report.recommendations },
   };
+  // An intern sees their own training recommendation and what they got wrong about Suraasa. A hiring candidate never sees the hiring one.
+  if (report.training) { base.training = report.training; base.product = report.product; base.conduct = report.conduct.filter((c) => c.verified); }
   if (policy === 'summary') return base;
   return {
     ...base,

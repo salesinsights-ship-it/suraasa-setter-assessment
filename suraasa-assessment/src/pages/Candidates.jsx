@@ -35,11 +35,18 @@ function CandidateForm({ cand, onClose, onCode }) {
 }
 
 function AssignForm({ cand, onClose }) {
-  const { data, reload } = useAdmin();
+  const { data, reload, isAdmin } = useAdmin();
   const tpls = data.templates.filter((t) => t.active);
   const active = data.personas.filter((p) => p.active);
-  const [f, setF] = useState({ template_id: tpls[0]?.id || '', persona_mode: 'random', persona_ids: [], level: 0, duration_min: tpls[0]?.data.duration_min || 8, attempts: tpls[0]?.data.attempts || 1, due: '', allow_typed: false });
+  const [f, setF] = useState({ template_id: tpls[0]?.id || '', persona_mode: 'random', persona_ids: [], level: 0, duration_min: tpls[0]?.data.duration_min || 8, attempts: tpls[0]?.data.attempts || 1, due: '', allow_typed: false, practice: false, per_day: 3 });
   const [run, busy] = useAction();
+  const trainingTpl = tpls.find((t) => t.id === 't_training');
+  const trainingIds = active.filter((p) => p.id.startsWith('tr')).map((p) => p.id);
+  // Intern practice: the intern picks any listed teacher, as often as the daily limit allows, and sees full feedback.
+  const setKind = (practice, pack) => setF(practice
+    ? { ...f, practice: true, persona_mode: 'practice', level: 0, template_id: pack?.template_id || trainingTpl?.id || f.template_id, duration_min: trainingTpl?.data.duration_min || 15, persona_ids: pack?.persona_ids || (trainingIds.length ? trainingIds : active.map((p) => p.id)) }
+    : { ...f, practice: false, persona_mode: 'random', persona_ids: [], template_id: tpls[0]?.id || '', duration_min: tpls[0]?.data.duration_min || 8, attempts: tpls[0]?.data.attempts || 1 });
+  const install = async () => { const r = await run(() => rpc('installTraining'), 'Training teachers and rubric added'); if (r) { await reload(); setKind(true, r); } };
   const toggle = (id) => setF({ ...f, persona_ids: f.persona_mode === 'fixed' ? [id] : f.persona_ids.includes(id) ? f.persona_ids.filter((x) => x !== id) : [...f.persona_ids, id] });
   const shown = active;
   async function save(e) {
@@ -50,16 +57,27 @@ function AssignForm({ cand, onClose }) {
   return (
     <Modal title={`Assign a mock call to ${cand.name}`} onClose={onClose} wide>
       <form className="col" onSubmit={save}>
+        <div className="row gap-s wrap" data-testid="assign-kind">
+          <button type="button" className={'btn sm ' + (!f.practice ? 'primary' : '')} onClick={() => setKind(false)}>Hiring assessment</button>
+          <button type="button" className={'btn sm ' + (f.practice ? 'primary' : '')} onClick={() => setKind(true)} data-testid="kind-practice">Intern practice</button>
+          <span className="small muted">{f.practice ? 'The intern calls any teacher below, several times a day, and sees full feedback after each call.' : 'A fixed number of attempts, scored for a hiring recommendation.'}</span>
+        </div>
+        {f.practice && (!trainingTpl || trainingIds.length < 10) && (
+          <div className="note">The intern training pack (10 training teachers and the 8-skill, 100-mark rubric) has not been fully added to this site yet.
+            {isAdmin ? <div className="mt"><Btn size="sm" onClick={install} busy={busy} data-testid="install-training">Add the training pack</Btn></div> : ' Ask a Super Admin to add it from this screen.'}</div>
+        )}
         <div className="grid g2">
           <Field label="Assessment template"><Select value={f.template_id} onChange={(e) => { const t = tpls.find((x) => x.id === e.target.value); setF({ ...f, template_id: e.target.value, duration_min: t.data.duration_min, attempts: t.data.attempts }); }} options={tpls.map((t) => [t.id, t.name])} /></Field>
           <Field label="Difficulty level"><Select value={f.level} onChange={(e) => setF({ ...f, level: Number(e.target.value) })} options={Object.entries(LEVEL_NAMES)} /></Field>
-          <Field label="Call length" hint="minutes"><Input type="number" min="3" max="15" value={f.duration_min} onChange={(e) => setF({ ...f, duration_min: e.target.value })} /></Field>
-          <Field label="Attempts allowed"><Input type="number" min="1" max="5" value={f.attempts} onChange={(e) => setF({ ...f, attempts: e.target.value })} /></Field>
-          <Field label="Complete by" hint="optional"><Input type="date" value={f.due} onChange={(e) => setF({ ...f, due: e.target.value })} /></Field>
-          <Field label="Teacher"><Select data-testid="persona-mode" value={f.persona_mode} onChange={(e) => setF({ ...f, persona_mode: e.target.value, persona_ids: [] })} options={[['random', 'Random teacher, hidden until the call'], ['fixed', 'One teacher I choose'], ['choice', 'Candidate picks from my shortlist']]} /></Field>
+          <Field label="Call length" hint="minutes, up to 20"><Input type="number" min="3" max="20" value={f.duration_min} onChange={(e) => setF({ ...f, duration_min: e.target.value })} /></Field>
+          {f.practice
+            ? <Field label="Practice calls a day" hint="1 to 10"><Input type="number" min="1" max="10" value={f.per_day} onChange={(e) => setF({ ...f, per_day: e.target.value })} /></Field>
+            : <Field label="Attempts allowed"><Input type="number" min="1" max="5" value={f.attempts} onChange={(e) => setF({ ...f, attempts: e.target.value })} /></Field>}
+          <Field label={f.practice ? 'Practice open until' : 'Complete by'} hint="optional"><Input type="date" value={f.due} onChange={(e) => setF({ ...f, due: e.target.value })} /></Field>
+          {!f.practice && <Field label="Teacher"><Select data-testid="persona-mode" value={f.persona_mode} onChange={(e) => setF({ ...f, persona_mode: e.target.value, persona_ids: [] })} options={[['random', 'Random teacher, hidden until the call'], ['fixed', 'One teacher I choose'], ['choice', 'Candidate picks from my shortlist']]} /></Field>}
         </div>
         <div>
-          <div className="small strong" style={{ marginBottom: 8 }}>{f.persona_mode === 'random' ? 'Limit the random draw to these teachers (optional: none ticked means all)' : f.persona_mode === 'fixed' ? 'Choose one teacher' : 'Choose two or more teachers'}</div>
+          <div className="small strong" style={{ marginBottom: 8 }}>{f.practice ? 'Teachers the intern can call' : f.persona_mode === 'random' ? 'Limit the random draw to these teachers (optional: none ticked means all)' : f.persona_mode === 'fixed' ? 'Choose one teacher' : 'Choose two or more teachers'}</div>
           <div className="grid g2">
             {shown.map((p) => (
               <label key={p.id} className="card flat tight row" style={{ cursor: 'pointer', borderColor: f.persona_ids.includes(p.id) ? 'var(--blue)' : undefined }}>
@@ -162,9 +180,9 @@ export function CandidateDetail({ id }) {
           <table><thead><tr><th>Assigned</th><th className="hide-l">Template</th><th>Teacher</th><th>Level</th><th className="hide-l">Length</th><th>Attempts</th><th>Due</th><th>Status</th><th /></tr></thead>
             <tbody>{assignments.map((a) => (
               <tr key={a.id}><td className="nowrap">{fmtDate(a.created_at)}</td><td className="hide-l">{templates[a.template_id]?.name}</td>
-                <td>{a.persona_mode === 'random' ? `Random${a.persona_ids?.length ? ` of ${a.persona_ids.length}` : ''}` : (a.persona_ids || []).map((p) => personas[p]?.name).join(', ')}</td>
+                <td>{a.persona_mode === 'practice' ? `Practice, ${(a.persona_ids || []).length} teachers` : a.persona_mode === 'random' ? `Random${a.persona_ids?.length ? ` of ${a.persona_ids.length}` : ''}` : (a.persona_ids || []).map((p) => personas[p]?.name).join(', ')}</td>
                 <td>{a.level ? `Level ${a.level}` : 'Teacher\'s own'}</td><td className="hide-l">{a.duration_min} min</td>
-                <td>{sessions.filter((s) => s.assignment_id === a.id && !s.voided && ['scored', 'ended'].includes(s.status)).length} of {a.attempts}</td><td>{a.due || '–'}</td>
+                <td>{a.persona_mode === 'practice' ? `${sessions.filter((s) => s.assignment_id === a.id && !s.voided && ['scored', 'ended'].includes(s.status)).length} done · ${a.attempts} a day` : `${sessions.filter((s) => s.assignment_id === a.id && !s.voided && ['scored', 'ended'].includes(s.status)).length} of ${a.attempts}`}</td><td>{a.due || '–'}</td>
                 <td><Badge tone={a.status === 'open' ? 'blue' : ''}>{a.status}</Badge></td><td>{a.status === 'open' && <Btn size="sm" onClick={() => cancel(a.id)}>Cancel</Btn>}</td></tr>
             ))}</tbody></table>
         )}
