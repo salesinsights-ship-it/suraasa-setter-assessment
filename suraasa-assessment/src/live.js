@@ -21,7 +21,12 @@ function fromBase64(b64) {
 }
 const tidy = (t) => t.replace(/\s+/g, ' ').trim();
 
+// Only one live call may make sound in a page at a time. Starting another always hangs up the one before,
+// so two teachers can never talk over each other.
+let current = null;
+
 export function createLive(opts) {
+  current?.close();
   const stats = { refreshes: 0, interruptions: 0, reconnects: 0, stt_errors: 0, low_confidence: 0, muted_ms: 0 };
   const decoder = new TextDecoder();
   let ws = null; let ctx = null; let stream = null; let analyser = null; let meter = null; let watch = null;
@@ -32,6 +37,10 @@ export function createLive(opts) {
 
   const state = (s) => { if (s !== lastState) { lastState = s; opts.onState?.(s); } };
   const send = (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); };
+  const sockets = new Set(); // every connection this call has opened, so none is ever left talking in the background
+  let started = false; let quietUntil = 0;
+  /** Makes one connection the only one. Any other connection of this call is closed at once. */
+  const only = (keep) => { for (const s of sockets) if (s !== keep) { sockets.delete(s); try { s.onmessage = null; s.close(); } catch { /* already closed */ } } };
   const speaking = () => !!ctx && nextTime > ctx.currentTime + 0.05;
 
   function flushCandidate() {
@@ -48,6 +57,7 @@ export function createLive(opts) {
     for (const s of sources) { try { s.stop(); } catch { /* already stopped */ } }
     sources.clear();
     nextTime = 0;
+    quietUntil = Math.min(quietUntil, performance.now() + 250);
   }
 
   function play(bytes) {
@@ -61,6 +71,7 @@ export function createLive(opts) {
     if (recDest) src.connect(recDest); // the teacher's voice goes into the recording too
     const at = Math.max(ctx.currentTime + 0.03, nextTime);
     src.start(at); nextTime = at + buf.duration;
+    quietUntil = Math.max(quietUntil, performance.now() + (nextTime - ctx.currentTime) * 1000 + 350);
     sources.add(src); src.onended = () => sources.delete(src);
     state('teacher');
   }
@@ -108,18 +119,26 @@ export function createLive(opts) {
     modelIndex = tk.model_index ?? modelIndex;
     return new Promise((resolve, reject) => {
       let settled = false;
+      if (closed) { reject(new Error('closed')); return; }
       const sock = new WebSocket(tk.url + '?access_token=' + encodeURIComponent(tk.token));
       sock.binaryType = 'arraybuffer';
+      sockets.add(sock);
       const timer = setTimeout(() => { if (!settled) { settled = true; try { sock.close(); } catch { /* not open */ } reject(new Error('timeout')); } }, 12000);
       sock.onopen = () => sock.send(JSON.stringify({ setup: { model: 'models/' + tk.model } }));
       sock.onmessage = (ev) => {
         let msg;
         try { msg = JSON.parse(typeof ev.data === 'string' ? ev.data : decoder.decode(ev.data)); } catch { return; }
-        if (msg.setupComplete && !settled) { settled = true; clearTimeout(timer); ws = sock; ready = true; resolve(); return; }
+        if (msg.setupComplete && !settled) {
+          settled = true; clearTimeout(timer);
+          // The call may have been ended while this connection was still opening. It must not come alive afterwards.
+          if (closed) { try { sock.close(); } catch { /* already closed */ } reject(new Error('closed')); return; }
+          ws = sock; ready = true; only(sock); stopPlayback();
+          resolve(); return;
+        }
         if (sock === ws) onMessage(msg);
       };
       sock.onclose = (ev) => {
-        clearTimeout(timer);
+        clearTimeout(timer); sockets.delete(sock);
         if (!settled) { settled = true; reject(new Error(ev.reason || 'closed ' + ev.code)); return; }
         if (sock === ws && !closed && !ending && !refreshing) drop();
       };
@@ -154,7 +173,7 @@ export function createLive(opts) {
       quiet = true;
       await connectAny(opts.items());
       stats.refreshes++;
-      try { old?.close(); } catch { /* already closed */ }
+      if (old && old !== ws) { try { old.onmessage = null; old.close(); } catch { /* already closed */ } }
     } catch { /* handled below */ } finally { quiet = false; refreshing = false; }
     // If the new line could not be opened and the old one has gone, fall back to the ordinary reconnect.
     if (!closed && !ending && (!ws || ws.readyState > 1)) drop();
@@ -182,6 +201,8 @@ export function createLive(opts) {
   }
 
   async function start(history) {
+    if (started) return; // a second press of Start must not open a second line
+    started = true;
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
@@ -192,7 +213,11 @@ export function createLive(opts) {
     source.connect(node); node.connect(silent); silent.connect(ctx.destination);
     node.port.onmessage = (e) => {
       if (!ready || closed) return;
-      const data = muted ? new ArrayBuffer(e.data.byteLength) : e.data; // silence while muted, so Google still hears a quiet line
+      // Silence while muted, so Google still hears a quiet line. Without a headset the microphone is also silenced while
+      // the teacher is speaking: otherwise the teacher's own voice comes back through the speakers and the teacher starts
+      // answering itself, which sounds like several voices talking at once.
+      const echoRisk = !opts.headset && performance.now() < quietUntil;
+      const data = muted || echoRisk ? new ArrayBuffer(e.data.byteLength) : e.data;
       send({ realtimeInput: { audio: { data: toBase64(data), mimeType: 'audio/pcm;rate=16000' } } });
     };
     analyser = ctx.createAnalyser(); analyser.fftSize = 512; source.connect(analyser);
@@ -220,7 +245,7 @@ export function createLive(opts) {
     await connectAny(history);
   }
 
-  return {
+  const api = {
     start,
     /** A note from the phone system to the teacher, such as a time warning. */
     note(text) { send({ realtimeInput: { text } }); },
@@ -245,6 +270,9 @@ export function createLive(opts) {
     stats: () => ({ stt_errors: 0, low_confidence: 0, interruptions: stats.interruptions, avg_confidence: null, muted_sec: Math.round(stats.muted_ms / 1000), live_reconnects: stats.reconnects }),
     close() {
       closed = true; ready = false;
+      if (current === api) current = null;
+      only(null);
+      try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch { /* already stopped */ }
       clearInterval(meter); clearInterval(watch);
       stopPlayback();
       try { ws?.close(); } catch { /* already closed */ }
@@ -252,4 +280,6 @@ export function createLive(opts) {
       ctx?.close().catch(() => {});
     },
   };
+  current = api;
+  return api;
 }

@@ -38,7 +38,7 @@ const FAKE_SPEECH = () => {
   const RealWS = window.WebSocket;
   window.__live = null; window.__liveUrls = []; window.__liveNotes = [];
   class FakeLive {
-    constructor(url) { this.url = url; this.readyState = 0; this.audio = 0; this.toolResponses = []; window.__live = this; window.__liveUrls.push(url); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 20); }
+    constructor(url) { window.__liveAll = (window.__liveAll || []).concat([this]); this.url = url; this.readyState = 0; this.audio = 0; this.toolResponses = []; window.__live = this; window.__liveUrls.push(url); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 20); }
     send(data) {
       const m = JSON.parse(data);
       if (m.setup) { this.setup = m.setup; this.emit({ setupComplete: {} }); }
@@ -46,7 +46,7 @@ const FAKE_SPEECH = () => {
         window.__liveNotes.push(m.realtimeInput.text);
         if (/call connected/.test(m.realtimeInput.text)) this.teacher('Hello? Yes, Meenakshi speaking.');
         if (/reconnected/.test(m.realtimeInput.text)) this.teacher('Hello? Sorry, the line dropped. Please go on.');
-      } else if (m.realtimeInput?.audio) { this.audio++; this.lastMime = m.realtimeInput.audio.mimeType; }
+      } else if (m.realtimeInput?.audio) { this.audio++; this.lastMime = m.realtimeInput.audio.mimeType; this.lastSilent = /^A+=*$/.test(m.realtimeInput.audio.data); if (!this.lastSilent) this.heard = (this.heard || 0) + 1; }
       else if (m.toolResponse) this.toolResponses.push(m.toolResponse);
     }
     emit(obj) { this.onmessage?.({ data: new TextEncoder().encode(JSON.stringify(obj)).buffer }); }
@@ -583,6 +583,40 @@ await step('Training page: trainers see each intern\'s practice, the team\'s wea
   assert.equal(await tp.isChecked('[data-testid=record-audio]'), true);
   assert.ok(before.length > 0);
   await tp.context().close();
+});
+
+await step('One voice only: pressing Start twice opens one line, a renewed line closes the old one, and without a headset the teacher never hears itself', async () => {
+  const adminToken = await world.signIn(world.admin.email, world.admin.code);
+  const made = await world.rpc('saveCandidate', { name: 'Echo Tester', email: 'echo@example.com' }, adminToken);
+  await world.rpc('saveAssignment', { candidate_id: made.id, template_id: 't_default', persona_mode: 'fixed', persona_ids: ['p01'] }, adminToken);
+  const ep = await open();
+  await signIn(ep, 'echo@example.com', made.access_code);
+  await ep.waitForSelector('[data-testid=assignment]');
+  await ep.click('text=Get ready for the call');
+  await ep.click('text=Check microphone');
+  await ep.waitForSelector('text=Microphone is allowed');
+  await ep.check('[data-testid=consent]');
+  // an impatient double press
+  await ep.evaluate(() => { const b = document.querySelector('[data-testid=start-call]'); b.click(); b.click(); });
+  await waitState(ep, 'listening');
+  await ep.waitForTimeout(600);
+  assert.equal(await ep.evaluate(() => window.__liveUrls.length), 1, 'two presses must open one line');
+  // no headset: while the teacher is speaking, the microphone sends silence, so the teacher cannot hear its own voice
+  await ep.waitForFunction(() => window.__live.heard >= 2, null, { timeout: 15000 });
+  await ep.evaluate(() => { const l = window.__live; l.emit({ serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'A'.repeat(192000) } }] } } }); });
+  await ep.waitForTimeout(700);
+  const during = await ep.evaluate(() => { const l = window.__live; const h = l.heard; return new Promise((res) => setTimeout(() => res({ silent: l.lastSilent, more: l.heard - h }), 800)); });
+  assert.deepEqual(during, { silent: true, more: 0 }, 'the microphone must be silent while the teacher speaks');
+  await ep.waitForFunction(() => window.__live.lastSilent === false, null, { timeout: 15000 });
+  // the line is renewed: exactly one connection is left open afterwards
+  await ep.evaluate((l) => window.__liveSay(l, 'Hmm. Go on.'), GOOD_LINES[0]);
+  await ep.evaluate(() => window.__live.emit({ goAway: { timeLeft: '50s' } }));
+  await ep.waitForFunction(() => window.__liveUrls.length === 2, null, { timeout: 15000 });
+  await ep.waitForTimeout(500);
+  assert.equal(await ep.evaluate(() => window.__liveAll.filter((x) => x.readyState !== 3).length), 1, 'the old line must be closed');
+  await ep.click('[data-testid=end-call]');
+  await ep.waitForFunction(() => window.__liveAll.every((x) => x.readyState === 3), null, { timeout: 15000 });
+  await ep.context().close();
 });
 
 await step('No JavaScript errors on any page', async () => { assert.deepEqual(errors, []); });

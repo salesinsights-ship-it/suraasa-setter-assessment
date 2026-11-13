@@ -32,6 +32,24 @@ export default function Call({ assignmentId, personaId }) {
   const [notice, setNotice] = useState('');
   const [typed, setTyped] = useState('');
   const [doneInfo, setDoneInfo] = useState(null);
+  const [starting, setStarting] = useState(false);
+  const tabs = useRef(null);
+  const tabId = useRef(Math.random().toString(36).slice(2));
+
+  // The same person with the site open in two tabs: when a call starts in one, any call sounding in another stops.
+  useEffect(() => {
+    if (!window.BroadcastChannel) return undefined;
+    const ch = new BroadcastChannel('sa-call'); tabs.current = ch;
+    ch.onmessage = (ev) => {
+      if (ev.data?.type !== 'call-started' || ev.data.id === tabId.current) return;
+      const r = ref.current;
+      if (!r.voice && !r.call) return;
+      window.speechSynthesis?.cancel?.();
+      r.voice?.close(); r.voice = null; r.finishing = true;
+      setError('A call was started in another tab, so the call in this tab was stopped. Close this tab and carry on in the other one.');
+    };
+    return () => { ch.close(); tabs.current = null; };
+  }, []);
 
   const ref = useRef({ call: null, voice: null, busy: false, ended: false, reconnects: 0, finishing: false, queue: [] });
   const saved = useRef(load(assignmentId));
@@ -160,7 +178,7 @@ export default function Call({ assignmentId, personaId }) {
       onState: (s) => { if (!ref.current.ringing) setLive(s); },
       onEnd: () => finish('teacher'),
       onLost: () => finish('connection'),
-      record: !!c.record,
+      record: !!c.record, headset: !!c.headset,
     });
   }
 
@@ -173,8 +191,15 @@ export default function Call({ assignmentId, personaId }) {
   }
 
   async function begin(resume) {
+    // One call at a time: a second press while the first is still connecting does nothing, and any voice left
+    // over from an earlier attempt is hung up before a new one starts.
+    if (ref.current.starting) return;
+    ref.current.starting = true; setStarting(true);
+    window.speechSynthesis?.cancel?.();
+    ref.current.voice?.close(); ref.current.voice = null;
     setError('');
     try {
+      tabs.current?.postMessage({ type: 'call-started', id: tabId.current, assignment: assignmentId });
       let c = resume;
       if (!c) {
         const canVoice = info.live || voiceSupported();
@@ -216,7 +241,7 @@ export default function Call({ assignmentId, personaId }) {
         await v.speak(resume ? (c.lang.startsWith('hi') ? 'हेलो? आवाज़ कट गई थी। आप बोलिए।' : 'Hello? The line dropped for a moment. Please go on.') : last.x, c.persona.gender);
         setLive('listening'); v.listen();
       } else setLive('listening');
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e.message); } finally { ref.current.starting = false; setStarting(false); }
   }
 
   function toggleMute() {
@@ -250,7 +275,7 @@ export default function Call({ assignmentId, personaId }) {
         <p className="muted">This takes a minute. The call itself is {info.practice ? 'up to ' : ''}{info.duration_min} minutes.</p>
         {resume && (
           <div className="note warn mt"><b>You have a call in progress.</b> It was interrupted before it finished. You can pick it up where it stopped.
-            <div className="mt"><Btn kind="primary" onClick={() => begin(resume)}>Resume the call</Btn></div></div>
+            <div className="mt"><Btn kind="primary" busy={starting} onClick={() => begin(resume)}>Resume the call</Btn></div></div>
         )}
         <div className="card mt col">
           <div className="row between wrap"><div><h3>1. Browser</h3><p className="small muted">{supported ? 'This browser supports voice calls.' : 'This browser cannot do voice calls. Use Chrome or Edge.'}</p></div><span className={'badge ' + (supported ? 'good' : 'bad')}>{supported ? 'Ready' : 'Not supported'}</span></div>
@@ -262,21 +287,21 @@ export default function Call({ assignmentId, personaId }) {
               {[['en-IN', 'Mostly English'], ['hi-IN', 'Mostly Hindi']].map(([v, t]) => <button key={v} type="button" className={'btn sm ' + (lang === v ? 'primary' : '')} onClick={() => setLang(v)}>{t}</button>)}
             </div>
             <p className="small muted mt">This only helps the browser hear you correctly. You can switch during the call, and you will not lose marks for speaking Hindi or Hinglish.</p></div>
-          <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={headset} onChange={(e) => setHeadset(e.target.checked)} style={{ marginTop: 4 }} /><span><b>I am wearing a headset or earphones.</b><br /><span className="small muted">{info.live ? 'Recommended. It stops the teacher\'s voice from leaking into your microphone and makes you easier to hear.' : 'Lets you speak while the teacher is speaking. Without one, wait for "Your turn" so the teacher\'s voice is not picked up by your microphone.'}</span></span></label>
+          <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={headset} onChange={(e) => setHeadset(e.target.checked)} style={{ marginTop: 4 }} /><span><b>I am wearing a headset or earphones.</b><br /><span className="small muted">{info.live ? 'Strongly recommended. With a headset you can talk over the teacher, as on a real call. Without one, your microphone is paused while the teacher is speaking so the teacher does not hear their own voice, so wait for them to finish.' : 'Lets you speak while the teacher is speaking. Without one, wait for "Your turn" so the teacher\'s voice is not picked up by your microphone.'}</span></span></label>
         </div>
         <div className="card mt col">
           <h3>What to expect</h3>
           <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
             <li>You are calling a teacher who is played by AI. Treat it as a real call.</li>
             <li>The teacher answers first. Then introduce yourself and take the call forward.</li>
-            <li>{info.live ? 'Speak as you would on a phone call. You can talk over the teacher, and the teacher can talk over you.' : 'Pause when you finish a thought. The teacher replies after a short silence.'}</li>
+            <li>{info.live ? (headset ? 'Speak as you would on a phone call. You can talk over the teacher, and the teacher can talk over you.' : 'Speak as you would on a phone call. Without a headset, let the teacher finish before you reply.') : 'Pause when you finish a thought. The teacher replies after a short silence.'}</li>
             <li>The call ends at {info.duration_min} minutes, or earlier if you or the teacher end it. You need at least {info.min_turns} turns for it to be assessed.</li>
             <li>{info.practice ? `You have ${info.left} practice call${info.left === 1 ? '' : 's'} left today.` : `You have ${info.left} attempt${info.left === 1 ? '' : 's'}.`} A call that drops for technical reasons can be resumed.</li>
           </ul>
           <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ marginTop: 4 }} data-testid="consent" /><span className="small">{info.live ? 'I understand that my voice is sent to Google\'s Gemini service to run this call and turn it into text, that Google may use it to improve its products, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.' + (info.record ? ' The audio of this call is recorded and kept in Suraasa\'s Google Drive.' : '') : 'I understand that my speech is turned into text by my browser\'s speech service, and that the transcript and AI assessment are stored and reviewed by Suraasa\'s ' + (info.practice ? 'training' : 'recruitment') + ' team.'}</span></label>
         </div>
         {!supported && canTyped && <div className="note mt">Your recruiter has allowed a typed call for this assessment. You will type instead of speaking.</div>}
-        <div className="row mt wrap"><Btn kind="primary lg" disabled={!ready || !!info.blocked} onClick={() => begin(null)} data-testid="start-call">Start the call</Btn>{!consent && <span className="small muted">Tick the box above to continue.</span>}{consent && !ready && <span className="small muted">Check your microphone first.</span>}</div>
+        <div className="row mt wrap"><Btn kind="primary lg" disabled={!ready || !!info.blocked || starting} onClick={() => begin(null)} data-testid="start-call">Start the call</Btn>{!consent && <span className="small muted">Tick the box above to continue.</span>}{consent && !ready && <span className="small muted">Check your microphone first.</span>}</div>
       </div>
     );
   }
