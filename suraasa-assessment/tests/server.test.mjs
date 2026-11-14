@@ -12,6 +12,8 @@ const RUBRIC_MARKS = [6, 5, 3, 6, 7, 5, 6, 8, 9, 4, 3, 2, 6]; // the stand-in AI
 import { teacherSystem, cleanReply } from '../server/prompts.js';
 import { buildReport, validateTemplate, verifyQuote, candidateTurns, norm } from '../server/rubric.js';
 import { hashCode } from '../server/auth.js';
+import { voiceFor } from '../server/live.js';
+import { TRAINING_PERSONAS as ALL_TRAINING } from '../server/seed.js';
 
 /** A world with one recruiter, one candidate and one open assignment. */
 async function ready(opts = {}) {
@@ -487,7 +489,7 @@ test('Real-model faults seen in testing: glued drafts, assistant-style refusals 
     items = items.concat(r.items); chain = r.chain;
   }
   const sys = teacherSystem(meen, { level: 1, durationMin: 8 });
-  assert.ok(sys.includes('Write exactly one reply') && sys.includes('Do not hang up just because'));
+  assert.ok(sys.includes('Write exactly one reply') && sys.includes('It is not a reason to leave in the first minutes'));
 });
 
 test('Live voice: off without a key, and the token keeps the teacher\'s instructions on the server', async () => {
@@ -515,7 +517,11 @@ test('Live voice: off without a key, and the token keeps the teacher\'s instruct
   const sys = setup.systemInstruction.parts[0].text;
   assert.ok(sys.includes('Meenakshi Iyer') && sys.includes('end_call function') && sys.includes(start.items[0].x));
   assert.ok(!sys.includes('[END_CALL]') && !sys.includes('TIME:'));
-  assert.equal(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Kore');
+  assert.equal(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, voiceFor(SEED_PERSONAS[0]));
+  assert.deepEqual(setup.realtimeInputConfig.automaticActivityDetection, { startOfSpeechSensitivity: 'START_SENSITIVITY_LOW', endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: 120, silenceDurationMs: 900 });
+  // The live instructions are about speaking, not writing.
+  assert.ok(sys.includes('HOW YOU SOUND') && sys.includes('Most of your replies are one or two short sentences') && sys.includes('stay silent and wait'));
+  assert.ok(!sys.includes('under 45 words') && !sys.includes('Devanagari') && !sys.includes('Write exactly one reply'));
   assert.equal(setup.tools[0].functionDeclarations[0].name, 'end_call');
   assert.deepEqual(setup.inputAudioTranscription, {});
   // a dropped line: the new token carries what was said so far
@@ -926,4 +932,41 @@ test('Rubric update: a site set up on the old rubrics moves to the Setter Evalua
   admin = await w.signIn(w.admin.email, w.admin.code);
   const after = (await w.rpc('adminHome', {}, admin)).templates.find((x) => x.id === 't_default');
   assert.deepEqual([after.data.thresholds.strong, after.version], [90, 4]);
+});
+
+test('Teachers sound like people: fillers fit the language and the mode, helpdesk phrases are ruled out, and each teacher has a voice', async () => {
+  const all = [...SEED_PERSONAS, ...ALL_TRAINING];
+  for (const q of all) {
+    const text = teacherSystem(q, { level: 2, durationMin: 15 });
+    const live = teacherSystem(q, { level: 2, durationMin: 15, live: true });
+    for (const sys of [text, live]) {
+      assert.ok(sys.includes('HOW YOU SOUND') && sys.includes(q.style), q.id + ': the teacher\'s own habits of speech are included');
+      assert.ok(sys.includes('at most one of these in a reply') && sys.includes('Never say "How can I help you"'), q.id);
+      assert.ok(sys.includes('Never say you do not know a fact about your own life'), q.id);
+      assert.ok(!/rubric|marks|out of 100|hiring exercise/i.test(sys), q.id);
+    }
+    const hindi = q.language === 'hinglish' || q.language === 'hi';
+    assert.equal(text.includes('"अच्छा", "हाँ"'), hindi, q.id + ': Hindi speakers get Hindi fillers');
+    assert.ok(!text.includes('"umm"'), 'sounds a computer voice reads badly are left out of the standard voice mode');
+    assert.ok(text.includes('[END_CALL]') && !live.includes('[END_CALL]') && !live.includes('TIME:'));
+    assert.equal(voiceFor(q), voiceFor({ ...q }), 'the same teacher always gets the same voice');
+    assert.ok((q.gender === 'male' ? ['Charon', 'Puck', 'Fenrir', 'Orus'] : ['Kore', 'Aoede', 'Leda', 'Zephyr']).includes(voiceFor(q)), q.id);
+  }
+  assert.ok(new Set(all.filter((q) => q.gender === 'female').map(voiceFor)).size >= 3, 'the women do not all share one voice');
+  assert.ok(new Set(all.filter((q) => q.gender === 'male').map(voiceFor)).size >= 2);
+});
+
+test('Live voice: a model that refuses the patient-listening settings still gets a call, with the plain settings', async () => {
+  const { w, candidate, assignmentId } = await ready();
+  w.enableLive();
+  const start = await w.rpc('startCall', { assignment_id: assignmentId, mode: 'live' }, candidate);
+  w.gemini.state.mode = 'no-patient';
+  const tk = await w.rpc('liveToken', { callToken: start.callToken, greeting: start.items[0].x }, candidate);
+  assert.equal(tk.model, 'gemini-3.8-live', 'the first model is still used');
+  const sent = w.gemini.state.calls.at(-1).body.bidiGenerateContentSetup;
+  assert.deepEqual(sent.realtimeInputConfig.automaticActivityDetection, { silenceDurationMs: 700 });
+  assert.ok(sent.contextWindowCompression, 'long-call support is kept');
+  const before = w.gemini.state.calls.length;
+  await w.rpc('liveToken', { callToken: start.callToken, items: [{ r: 't', x: 'Hello?', t: 0 }, { r: 'c', x: 'Hi, Rohan from Suraasa here.', t: 900 }] }, candidate);
+  assert.equal(w.gemini.state.calls.length, before + 1, 'the working form is remembered, so the next line opens in one request');
 });

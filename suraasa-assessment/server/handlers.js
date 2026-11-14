@@ -5,7 +5,7 @@ import { LlmError, DEFAULT_MODELS } from './llm.js';
 import { encode, decode } from './store.js';
 import { SEED_PERSONAS, DEFAULT_TEMPLATE, SEED_KNOWLEDGE, DEFAULT_CONFIG, TRAINING_PERSONAS, TRAINING_TEMPLATE, SETTER_RUBRIC } from './seed.js';
 import { teacherMessages, teacherLiveSystem, cleanReply, evaluatorMessages, parseJson } from './prompts.js';
-import { LIVE_WS, LIVE_VOICES } from './live.js';
+import { LIVE_WS, LIVE_VOICES, voiceFor } from './live.js';
 import { buildReport, reportForCandidate, validateTemplate, RECOMMENDATIONS } from './rubric.js';
 
 const HOUR = 3600000;
@@ -413,7 +413,7 @@ export async function handle(body, deps) {
       const greeting = (persona.greeting || []).includes(body.greeting) ? body.greeting : persona.greeting?.[0];
       const out = await deps.live.mint({
         system: teacherLiveSystem(persona, { level: call.lvl, durationMin: Math.round(call.dur / 60), greeting, history, quiet: !!body.quiet }),
-        voice: LIVE_VOICES[persona.gender] || LIVE_VOICES.female, ttlSec: remaining + 180, modelIndex: int(body.model_index, 0, 9, 0),
+        voice: voiceFor(persona), ttlSec: remaining + 180, modelIndex: int(body.model_index, 0, 9, 0),
       });
       return { ok: true, token: out.token, model: out.model, model_index: out.modelIndex, url: LIVE_WS };
     }

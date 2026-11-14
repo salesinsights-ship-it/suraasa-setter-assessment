@@ -9,8 +9,18 @@ import { AppError } from './auth.js';
 export const LIVE_WS = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 export const DEFAULT_LIVE_MODELS = ['gemini-3.8-live', 'gemini-3.1-flash-live-preview', 'gemini-2.5-flash-native-audio-preview-12-2025'];
 export const LIVE_VOICES = { female: 'Kore', male: 'Charon' };
+// Voices every Gemini live model offers. Each teacher keeps one of them, so ten teachers do not all sound like one person.
+const VOICE_POOL = { female: ['Kore', 'Aoede', 'Leda', 'Zephyr'], male: ['Charon', 'Puck', 'Fenrir', 'Orus'] };
 
-export function liveSetup({ model, system, voice, compress = true }) {
+/** The voice for a teacher: always the same for the same teacher, chosen from the voices for their gender. */
+export function voiceFor(persona) {
+  const pool = VOICE_POOL[persona?.gender] || VOICE_POOL.female;
+  let h = 0;
+  for (const ch of String(persona?.id || persona?.name || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return pool[h % pool.length];
+}
+
+export function liveSetup({ model, system, voice, compress = true, patient = true }) {
   return {
     model: 'models/' + model,
     generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
@@ -22,7 +32,11 @@ export function liveSetup({ model, system, voice, compress = true }) {
     }] }],
     inputAudioTranscription: {},
     outputAudioTranscription: {},
-    realtimeInputConfig: { automaticActivityDetection: { silenceDurationMs: 700 } },
+    // "Patient" listening: the teacher waits through a caller's thinking pause instead of cutting in, and does not
+    // take a cough or room noise for speech. If a model refuses these settings the plain form below is used.
+    realtimeInputConfig: { automaticActivityDetection: patient
+      ? { startOfSpeechSensitivity: 'START_SENSITIVITY_LOW', endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: 120, silenceDurationMs: 900 }
+      : { silenceDurationMs: 700 } },
     // Without this Google ends an audio session at 15 minutes. With it, older turns are trimmed and the call can run on.
     ...(compress ? { contextWindowCompression: { slidingWindow: {} } } : {}),
   };
@@ -51,11 +65,12 @@ export function makeLive({ apiKey, fetchImpl = fetch, baseUrl = 'https://generat
       // Google documents two request shapes for the same thing. Both keep the settings on the server side.
       // Each is tried with long-call support first, then without it in case a model does not accept that setting.
       const bodies = [];
-      for (const compress of [true, false]) {
-        const setup = liveSetup({ model: models[i], system, voice, compress });
+      for (const [compress, patient] of [[true, true], [true, false], [false, false]]) {
+        const setup = liveSetup({ model: models[i], system, voice, compress, patient });
         const { model, ...config } = setup;
-        bodies.push(['setup' + (compress ? '' : '-short'), { ...times, bidiGenerateContentSetup: setup }]);
-        bodies.push(['constraints' + (compress ? '' : '-short'), { ...times, liveConnectConstraints: { model, config } }]);
+        const tag = (compress ? '' : '-short') + (patient ? '' : '-plain');
+        bodies.push(['setup' + tag, { ...times, bidiGenerateContentSetup: setup }]);
+        bodies.push(['constraints' + tag, { ...times, liveConnectConstraints: { model, config } }]);
       }
       const known = bodies.findIndex(([f]) => f === accepted.get(models[i]));
       if (known > 0) bodies.unshift(bodies.splice(known, 1)[0]);
